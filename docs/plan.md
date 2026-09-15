@@ -56,7 +56,7 @@
 - Keep soft links such as source transaction and journal IDs consistent from the event ledger even where the schema has no FK constraint.
 
 ## 6. Create and run readable verifiers
-- Add [`verifiers.py`](/Users/fleettrial_candidate/worktrial/bonsai/verifiers.py) with a small registry/decorator that tags every check as `knowledge_base` or `rules`. Keep this file at the repo root; do not copy it into `results/`.
+- Keep tagged `knowledge_base` and `rules` checks in [`main.py`](/Users/fleettrial_candidate/worktrial/bonsai/main.py). Do not emit a separate `verifiers.py` into `results/`.
 - Implement the documented checks: KB entities/relationships exist; every journal balances; line/header totals reconcile; applications do not exceed payments or balances; dates are causal and fall in posting periods; subsidiary/currency/period agree across chains; ordered/fulfilled/received/billed quantities reconcile; revenue-plan lines sum to plan totals.
 - `_run_verifiers()` will execute all checks, record individual outcomes, append failures to the log, and fail the process rather than silently produce an invalid database.
 
