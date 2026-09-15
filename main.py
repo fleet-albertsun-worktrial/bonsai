@@ -41,7 +41,7 @@ class WorldParameters:
 
 def _extract_knowledge_base()
     # convert the narrative into people, companies, entities, dates, currencies, quantities
-    # prices, policies, relationships with stable IDs. 
+    # prices, policies, relationships with stable IDs into json files under intermediate_states/
     # this will enable us to run deterministic validators afterwards
 
 def _generate_records()
@@ -54,12 +54,28 @@ def _generate_records()
     # Revenue recognition and journal entries
     # Reports and compliance records
 
-    # use GPT-5.6-Sol with long context to output this successively. you have my keys in .env for OpenAI.
+    # use GPT-5.6-Terra with long context to output this successively. you have my keys in .env for OpenAI.
     # for things that can be simulated using faker (people's names, etc) and other python packages, use that first so that we can scale up quickly
+    # for every object you have a prompt for, create a jinja2 template in prompt_templates/
     # create folder with different prompt_templates
 
 def _create_verifiers()
     # create programmatic verifiers we can use to check that the states of the sqlite file align along the two. 
+    # the process of creating these programmatic verifiers should be programmatic and placed into verifiers.py
+    # each verifier is tagged knowledge_base or rules
+    # Knowledge base: 
+    # The entities, dates, currencies, quantities, prices, policies, and relationships exist in the sqlite file. 
+    # Rules. Ensure mathematical consistency; for instance, that PnL adds up in a cohesive way. 
+    # Debits equal credits
+    # Line totals equal document totals
+    # Payments do not exceed outstanding balances
+    # Dates follow causal order
+    # Subsidiary, currency, and accounting periods agree
+    # Quantities ordered, fulfilled, received, and billed reconcile
+    # Revenue-plan lines sum to the plan total
+
+    # the code for constructing these should be highly interpretable.
+
 
 def _compile()
     # compile all the intermediate states into a sqlite file. 
@@ -94,4 +110,5 @@ def generate(
     # output.sqlite
     # statistics.json: how long each process took
     # pipeline.log: append-only log of any errors that we ran into
+    # verifiers.py
     # intermediate_states/: a json file for each so that our process is idempotent
