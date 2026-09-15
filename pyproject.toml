@@ -1,0 +1,10 @@
+[project]
+name = "bonsai"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "faker>=37",
+  "jinja2>=3.1",
+  "openai>=1.100",
+  "python-dotenv>=1.1",
+]

@@ -1,2 +1,5 @@
 theseus-stratum-deployed-bundle
 .env
+.venv/
+__pycache__/
+results/

@@ -1,0 +1,22 @@
+You are designing one coherent synthetic SMB accounting world.
+Use the narrative and parameters below as constraints, not suggestions.
+
+Narrative: {{ world_description }}
+Parameters: {{ parameters_json }}
+Available schema: {{ schema_context }}
+
+Return JSON only with:
+{
+  "schema_version": "1.0",
+  "company": {"id": "snake_case", "name": "...", "industry": "...", "country": "US", "base_currency": "USD", "accounting_standard": "US_GAAP"},
+  "departments": [{"id": "...", "name": "...", "headcount_weight": 0.0}],
+  "employee_roles": [{"id": "...", "title": "...", "department_id": "...", "headcount_weight": 0.0, "salary_min_cents": 0, "salary_max_cents": 0}],
+  "customer_segments": [{"id": "...", "name": "...", "weight": 0.0, "payment_term_days": 30, "credit_limit_min_cents": 0, "credit_limit_max_cents": 0}],
+  "vendor_categories": [{"id": "...", "name": "...", "expense_account_role": "...", "weight": 0.0}],
+  "offerings": [{"id": "...", "name": "...", "kind": "inventory|service|subscription", "unit": "...", "unit_price_cents": 0, "unit_cost_cents": 0, "revenue_policy_id": "point_in_time|ratable", "order_quantity_min": 1, "order_quantity_max": 10}],
+  "accounting_policies": {"fiscal_year_start_month": 1, "monthly_close_day": 5, "default_payment_term_days": 30, "tax_rate_basis_points": 0},
+  "activity_profile": {"seasonality": "brief description", "sales_mix": [{"value": "...", "weight": 0.0}], "payment_methods": [{"value": "...", "weight": 0.0}]}
+}
+
+Use 3-8 entries per archetype list, integer cents for money, stable snake_case IDs,
+weights totaling approximately 1 within each list, and no people or transactions.

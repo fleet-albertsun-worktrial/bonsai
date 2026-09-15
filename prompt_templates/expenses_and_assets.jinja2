@@ -1,0 +1,11 @@
+Design employee-expense and fixed-asset lifecycle recipes for the shared world.
+Cover card/cash expenses, receipts, approvals, reimbursements, asset purchases,
+capitalization, monthly depreciation, disposal, and plausible exceptions.
+
+Shared world: {{ shared_context }}
+Relevant schema: {{ schema_context }}
+Workflow specifications: {{ workflow_context }}
+
+Return JSON only:
+{"domain":"expenses_and_assets","summary":"...","workflow_mix":[{"name":"...","weight":0.0}],"event_recipes":[{"name":"...","cadence":"...","steps":["..."],"exceptions":["..."]}],"realism_rules":["..."]}
+Do not create people, IDs, table rows, balances, or journal entries.
