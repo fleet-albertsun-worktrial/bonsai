@@ -1,10 +1,8 @@
 import argparse
 import asyncio
-import calendar
 import hashlib
 import json
 import logging
-import os
 import random
 import re
 import shutil
@@ -125,7 +123,7 @@ async def _ask_json(client, model, prompt):
     return _json_from_text(response.output_text)
 
 
-def _default_knowledge_base(world_parameters):
+def _default_knowledge_base():
     return {
         "schema_version": "1.0",
         "company": {
@@ -194,7 +192,7 @@ def _default_knowledge_base(world_parameters):
 
 
 def _normalize_knowledge_base(value, world_parameters):
-    default = _default_knowledge_base(world_parameters)
+    default = _default_knowledge_base()
     if not isinstance(value, dict):
         return default
     default["company"].update(value.get("company") or {})
@@ -256,7 +254,7 @@ def _extract_knowledge_base(world_parameters, state_dir, schema_path):
     knowledge, rng = _json(knowledge_path), random.Random(world_parameters.random_seed)
     fake = Faker()
     fake.seed_instance(world_parameters.random_seed)
-    source_departments = knowledge["departments"] or _default_knowledge_base(world_parameters)["departments"]
+    source_departments = knowledge["departments"] or _default_knowledge_base()["departments"]
     departments = [
         {"id": index, "key": source_departments[index % len(source_departments)]["id"],
          "name": source_departments[index % len(source_departments)]["name"]}
@@ -566,9 +564,9 @@ def _generate_records(world_parameters, state_dir, schema_path):
         customer = registry["customers"][index % len(registry["customers"])]
         offering = inventory[index % len(inventory)]
         item, order_date = item_rows[offering["id"]], random_date(40)
-        quantity, subtotal = rng.randint(1, 5), offering["price_cents"] * rng.randint(1, 5)
+        subtotal = offering["price_cents"] * rng.randint(1, 5)
         quantity = max(1, round(subtotal / offering["price_cents"]))
-        tax, total = round(subtotal * tax_bps / 10000), 0
+        tax = round(subtotal * tax_bps / 10000)
         total = subtotal + tax
         order = add(
             "sales_orders", order_number=f"SO-{index + 1:07d}", customer_id=customer["id"],
@@ -708,9 +706,10 @@ def _generate_records(world_parameters, state_dir, schema_path):
                        "source_id": order["id"], "amount_cents": actual,
                        "recipe": recipe("procure_to_pay", index)})
 
-    subscription_offerings = [x for x in registry["offerings"] if x["kind"] == "subscription"]
-    if not subscription_offerings:
-        subscription_offerings = [registry["offerings"][-1]]
+    subscription_offerings = (
+        [x for x in registry["offerings"] if x["kind"] == "subscription"]
+        or [registry["offerings"][-1]]
+    )
     offering = subscription_offerings[0]
     plan = add("subscription_plans", plan_id="MAINTENANCE", name="Managed Maintenance Plan",
                description=offering["name"], billing_mode="advance",
@@ -905,8 +904,8 @@ def _generate_records(world_parameters, state_dir, schema_path):
             approval_date=start.isoformat(), notes=recipe("planning_reporting_close", department["id"]),
             status="approved",
         )
-        pieces = [annual // len(periods)] * len(periods)
-        pieces[-1] += annual - sum(pieces)
+        monthly, remainder = divmod(annual, len(periods))
+        pieces = [monthly] * (len(periods) - 1) + [monthly + remainder]
         for period, amount in zip(periods, pieces):
             add("budget_lines", budget_id=budget["id"],
                 account_id=accounts["operating_expense"]["id"], period_id=period["id"],
@@ -1122,6 +1121,7 @@ def _create_verifiers():
     # Revenue-plan lines sum to the plan total
 
     # the code for constructing these should be highly interpretable.
+    pass
 
 
 def _compile(output_path, state_dir, schema_path, world_parameters):
@@ -1235,7 +1235,7 @@ def generate(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", force=True,
         handlers=[logging.FileHandler(output_path / "pipeline.log", mode="a"), logging.StreamHandler()],
     )
-    logger, timings = logging.getLogger("bonsai"), {}
+    logger, timings, pipeline_started = logging.getLogger("bonsai"), {}, time.perf_counter()
     _validate(world_parameters)
     run_hash, state_dir = _fingerprint(world_parameters, schema_path), output_path / "intermediate_states"
     saved_hash = (state_dir / "run_hash.txt").read_text().strip() if (state_dir / "run_hash.txt").exists() else ""
@@ -1268,20 +1268,33 @@ def generate(
     else:
         timings["compile_seconds"] = 0
 
-    _create_verifiers()
-
     started = time.perf_counter()
     verifier_results = _run_verifiers(output_path, state_dir)
     timings["verify_seconds"] = round(time.perf_counter() - started, 3)
+    timings["total_seconds"] = round(time.perf_counter() - pipeline_started, 3)
     if row_counts is None:
         with sqlite3.connect(output_path / "output.sqlite") as db:
             names = [row[0] for row in db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             )]
             row_counts = {name: db.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0] for name in names}
+    prior_statistics = (
+        _json(output_path / "statistics.json")
+        if (output_path / "statistics.json").exists()
+        else {}
+    )
+    generation_timings = prior_statistics.get("generation_timings", {})
+    generation_timings.update({
+        key: value for key, value in timings.items()
+        if value and key != "total_seconds"
+    })
+    generation_timings["total_seconds"] = round(sum(
+        value for key, value in generation_timings.items()
+        if key != "total_seconds"
+    ), 3)
     statistics = {
         "run_hash": run_hash, "parameters": asdict(world_parameters), "model": world_parameters.model,
-        "timings": timings, "row_counts": row_counts,
+        "timings": timings, "generation_timings": generation_timings, "row_counts": row_counts,
         "database_size_bytes": (output_path / "output.sqlite").stat().st_size,
         "verifiers": verifier_results,
     }
