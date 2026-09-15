@@ -985,7 +985,7 @@ def _generate_records(world_parameters, state_dir, schema_path):
     marker.write_text("complete\n")
 
 
-def _create_verifiers(output_path):
+def _create_verifiers():
     # create programmatic verifiers we can use to check that the states of the sqlite file align along the two. 
     # the process of creating these programmatic verifiers should be programmatic and placed into verifiers.py
     # each verifier is tagged knowledge_base or rules
@@ -1001,10 +1001,6 @@ def _create_verifiers(output_path):
     # Revenue-plan lines sum to the plan total
 
     # the code for constructing these should be highly interpretable.
-    destination = output_path / "verifiers.py"
-    temporary = destination.with_suffix(".py.tmp")
-    shutil.copyfile(ROOT / "verifiers.py", temporary)
-    temporary.replace(destination)
 
 
 def _compile(output_path, state_dir, schema_path, world_parameters):
@@ -1126,8 +1122,7 @@ def generate(
     if saved_hash != run_hash:
         shutil.rmtree(state_dir, ignore_errors=True)
         state_dir.mkdir(parents=True)
-        for name in ("output.sqlite", "output.tmp.sqlite", "verifiers.py",
-                     "verifier_results.json", "statistics.json"):
+        for name in ("output.sqlite", "output.tmp.sqlite", "verifier_results.json", "statistics.json"):
             (output_path / name).unlink(missing_ok=True)
         (state_dir / "run_hash.txt").write_text(run_hash + "\n")
 
@@ -1153,8 +1148,7 @@ def generate(
     else:
         timings["compile_seconds"] = 0
 
-    if not (output_path / "verifiers.py").exists():
-        _create_verifiers(output_path)
+    _create_verifiers()
 
     started = time.perf_counter()
     verifier_results = _run_verifiers(output_path, state_dir)

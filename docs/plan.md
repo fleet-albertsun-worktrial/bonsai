@@ -56,11 +56,11 @@
 - Keep soft links such as source transaction and journal IDs consistent from the event ledger even where the schema has no FK constraint.
 
 ## 6. Create and run readable verifiers
-- Add [`verifiers.py`](/Users/fleettrial_candidate/worktrial/bonsai/verifiers.py) with a small registry/decorator that tags every check as `knowledge_base` or `rules`; `_create_verifiers()` will copy this auditable source into `results/verifiers.py`.
+- Add [`verifiers.py`](/Users/fleettrial_candidate/worktrial/bonsai/verifiers.py) with a small registry/decorator that tags every check as `knowledge_base` or `rules`. Keep this file at the repo root; do not copy it into `results/`.
 - Implement the documented checks: KB entities/relationships exist; every journal balances; line/header totals reconcile; applications do not exceed payments or balances; dates are causal and fall in posting periods; subsidiary/currency/period agree across chains; ordered/fulfilled/received/billed quantities reconcile; revenue-plan lines sum to plan totals.
 - `_run_verifiers()` will execute all checks, record individual outcomes, append failures to the log, and fail the process rather than silently produce an invalid database.
 
 ## 7. Produce artifacts and verify the full run
-- Record append-mode logs and timings directly around the calls. Write `results/output.sqlite`, `statistics.json` (parameters, model, timings, row counts, verifier results, final bytes), `pipeline.log`, `verifiers.py`, and `intermediate_states/`; never log secrets.
+- Record append-mode logs and timings directly around the calls. Write `results/output.sqlite`, `statistics.json` (parameters, model, timings, row counts, verifier results, final bytes), `pipeline.log`, and `intermediate_states/`; never log secrets.
 - Run the implementation using exactly `uv run main.py`.
 - Confirm exit status zero, 1–2 GB output at the configured target, all declared tables/indexes preserved, empty `foreign_key_check`/successful `quick_check`, all verifiers passing, and a second run reusing all valid checkpoints with zero OpenAI calls and no duplicate rows.
