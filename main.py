@@ -108,7 +108,17 @@ def generate(
 
     # output this, the file should containing: 
     # output.sqlite
-    # statistics.json: how long each process took
+    # statistics.json: how long each process took, the total size of the resulting file
     # pipeline.log: append-only log of any errors that we ran into
     # verifiers.py
     # intermediate_states/: a json file for each so that our process is idempotent
+
+if __name__ == "__main__":
+
+    world_parameters = WorldParameters(...)
+
+    # Outputs a folder in results/ containing output.sqlite, statistics.json, and pipeline.log.
+    generate(
+        output_path=”results/”, 
+        world_parameters=world_parameters
+    )
