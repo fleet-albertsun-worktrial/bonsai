@@ -77,6 +77,22 @@ def _app():
     timings = statistics.get("generation_timings") or statistics.get("timings", {})
     row_counts = statistics.get("row_counts", {})
     verifiers = statistics.get("verifiers", [])
+    descriptions = {
+        "knowledge_base_entities": "Knowledge-base companies and offerings exist.",
+        "foreign_keys": "All foreign-key references resolve.",
+        "balanced_journals": "Debits equal credits for every journal entry.",
+        "document_totals": "Invoice and bill lines reconcile to document totals.",
+        "payment_limits": "Payments and applications do not exceed balances.",
+        "causal_dates": "Orders, invoices, and payments follow causal date order.",
+        "dimensions_and_periods": "Subsidiaries, currencies, and posting periods agree.",
+        "quantity_reconciliation": "Ordered, fulfilled, received, and billed quantities reconcile.",
+        "revenue_plan_totals": "Revenue-plan lines sum to their plan totals.",
+    }
+    verifier_rows = [
+        {"name": item["name"], "description": descriptions.get(item["name"], ""),
+         **{key: value for key, value in item.items() if key != "name"}}
+        for item in verifiers
+    ]
     elapsed = timings.get("total_seconds", sum(
         value for value in timings.values() if isinstance(value, (int, float))
     ))
@@ -99,7 +115,7 @@ def _app():
     with st.expander("Generation parameters"):
         st.json(statistics.get("parameters", {}))
     with st.expander("Verifier results"):
-        st.dataframe(verifiers, use_container_width=True, hide_index=True)
+        st.dataframe(verifier_rows, use_container_width=True, hide_index=True)
     with st.expander("Table row counts"):
         st.dataframe([{"table": table, "rows": row_counts.get(table, 0)} for table in tables],
                      use_container_width=True, hide_index=True)
