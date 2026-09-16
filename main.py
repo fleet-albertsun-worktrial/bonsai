@@ -26,6 +26,17 @@ JINJA = Environment(
 )
 PIPELINE_VERSION = '2'
 DOMAINS = {'order_to_cash': ('order-to-cash',), 'procure_to_pay': ('procure-to-pay',), 'subscription_lifecycle': ('subscription-lifecycle',), 'revenue_and_journal': ('revenue-recognition', 'journal-entry'), 'expenses_and_assets': ('expense-management', 'fixed-asset-lifecycle'), 'treasury_and_reconciliation': ('bank-reconciliation', 'exchange-rate-management'), 'planning_reporting_close': ('budget-management', 'financial-reporting', 'period-close'), 'consolidation_governance': ('consolidation',)}
+WORKFLOW_OUTPUT = {'workflow_mix': [{'name': '...', 'weight': 0.0, 'cadence': 'daily|weekly|monthly|quarterly|annual', 'steps': ['...'], 'exception': None}]}
+DOMAIN_PROMPTS = {
+    'order_to_cash': {'prompt': 'Design varied order-to-cash workflows. Cover estimates, approvals, sales orders, partial/full fulfillment, invoices, payments, deposits, returns, credit memos, and plausible exceptions.', 'json_output': WORKFLOW_OUTPUT},
+    'procure_to_pay': {'prompt': 'Design varied procure-to-pay workflows. Cover requisitions, RFQs, contracts, purchase orders, receipts, three-way matching, bills, payments, vendor credits/returns, and plausible exceptions.', 'json_output': WORKFLOW_OUTPUT},
+    'subscription_lifecycle': {'prompt': 'Design varied subscription-lifecycle workflows. Cover plans, activation, renewals, amendments, suspension, termination, usage, rating, prepaid drawdown, overages, recurring charges, and exceptions.', 'json_output': WORKFLOW_OUTPUT},
+    'revenue_and_journal': {'prompt': 'Design revenue-recognition and general-ledger workflows. Cover ASC 606 arrangements/elements, allocation, ratable and point-in-time recognition, holds, reclasses, accruals, reversals, and balanced posting.', 'json_output': WORKFLOW_OUTPUT},
+    'expenses_and_assets': {'prompt': 'Design employee-expense and fixed-asset workflows. Cover card/cash expenses, receipts, approvals, reimbursements, asset purchases, capitalization, monthly depreciation, disposal, and plausible exceptions.', 'json_output': WORKFLOW_OUTPUT},
+    'treasury_and_reconciliation': {'prompt': 'Design treasury, foreign-exchange, and bank-reconciliation workflows. Cover deposits, disbursements, transfers, cash timing, exchange rates, statement matching, uncleared items, reconciliation, and exceptions.', 'json_output': WORKFLOW_OUTPUT},
+    'planning_reporting_close': {'prompt': 'Design budgeting, forecasting, financial-reporting, and period-close workflows. Cover budget versus actual, rolling forecasts, statements, flux analysis, subledger reconciliation, review, period locks, and adjustments.', 'json_output': WORKFLOW_OUTPUT},
+    'consolidation_governance': {'prompt': 'Design consolidation, intercompany, approval, compliance, and audit workflows. Cover subsidiaries, eliminations, translated balances, segregation of duties, approval thresholds, control testing, evidence, and audit trails.', 'json_output': WORKFLOW_OUTPUT},
+}
 
 @dataclass
 class WorldParameters:
@@ -178,10 +189,9 @@ async def _generate_domain_plans(world_parameters, state_dir, schema_path, missi
 
     async def generate_domain(domain):
         async with semaphore:
-            plan = await _ask_json(client, world_parameters.model, _render(f'{domain}.jinja2', shared_context=shared, schema_context=_schema_context(schema_path), workflow_context=_workflow_context(domain)))
-        plan['domain'] = domain
-        for key in ('workflow_mix', 'event_recipes', 'realism_rules'):
-            plan.setdefault(key, [])
+            config = DOMAIN_PROMPTS[domain]
+            plan = await _ask_json(client, world_parameters.model, _render('domain.jinja2', domain_prompt=config['prompt'], json_output=json.dumps(config['json_output']), shared_context=shared, schema_context=_schema_context(schema_path), workflow_context=_workflow_context(domain)))
+        plan.setdefault('workflow_mix', [])
         _json(state_dir / 'domain_plans' / f'{domain}.json', plan)
     results = await asyncio.gather(*(generate_domain(domain) for domain in missing), return_exceptions=True)
     errors = [error for error in results if isinstance(error, Exception)]
@@ -238,8 +248,13 @@ def _generate_records(world_parameters, state_dir, schema_path):
         return round(cents / 100, 2)
 
     def recipe(domain, index):
-        recipes = plans[domain].get('event_recipes') or [{'name': f'{domain}_standard'}]
-        return recipes[index % len(recipes)].get('name', f'{domain}_standard')
+        recipes = plans[domain].get('workflow_mix') or [{'name': f'{domain}_standard'}]
+        weights = [max(0, float(item.get('weight', 0))) for item in recipes]
+        if not any(weights):
+            selected = recipes[index % len(recipes)]
+        else:
+            selected = rng.choices(recipes, weights=weights, k=1)[0]
+        return selected.get('name', f'{domain}_standard')
     start, end = (world_parameters.start_date, world_parameters.end_date)
 
     def random_date(days_before_end=0):

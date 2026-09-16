@@ -1,0 +1,13 @@
+{{ domain_prompt }}
+
+Shared world: {{ shared_context }}
+Relevant schema: {{ schema_context }}
+Workflow specifications: {{ workflow_context }}
+
+Return JSON only matching this shape:
+{{ json_output }}
+
+Use at most five workflows. Give weights totaling approximately 1. Cadence must
+be daily, weekly, monthly, quarterly, or annual. Use concise snake_case names
+for steps and exceptions. Set exception to null for a standard workflow.
+Do not create entities, IDs, table rows, balances, totals, or journal entries.
