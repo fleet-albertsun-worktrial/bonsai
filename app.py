@@ -1,4 +1,5 @@
 import argparse
+import html
 import json
 import sqlite3
 import sys
@@ -366,7 +367,25 @@ def _app():
                 )
                 if message.get("cc"):
                     st.caption(f"Cc: {', '.join(message['cc'])}")
-                st.text(message.get("body") or message.get("text", ""))
+                body = message.get("body") or message.get("text", "")
+                if message.get("font_family") and message.get("font_size_px"):
+                    font_family = html.escape(
+                        str(message["font_family"]), quote=True
+                    )
+                    font_size = int(message["font_size_px"])
+                    st.markdown(
+                        f'<div style="font-family:{font_family};'
+                        f'font-size:{font_size}px;white-space:pre-wrap">'
+                        f"{html.escape(body)}</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.text(body)
+                logo_path = message.get("logo_path")
+                if logo_path:
+                    logo = path / "email_gen" / logo_path
+                    if logo.is_file():
+                        st.image(str(logo), width=180)
         with right:
             st.subheader("Thread properties")
             properties = {
@@ -388,12 +407,26 @@ def _app():
                 "Topic": selected.get("topic") or "Direct",
                 "Tone": selected.get("tone"),
                 "MBTI": selected.get("mbti"),
+                "Font": selected.get("font_variant"),
+                "Font size": (
+                    f"{selected.get('font_size_px')}px"
+                    if selected.get("font_size_px") else None
+                ),
             }
             for label, value in properties.items():
                 st.markdown(f"**{label}**")
                 st.write(value if value not in (None, "") else "—")
             with st.expander("Workflow evidence"):
                 st.json(selected.get("steps", []))
+            mbox_path = selected.get("mbox_path")
+            if mbox_path:
+                mbox = path / "email_gen" / mbox_path
+                if mbox.is_file():
+                    st.download_button(
+                        "Download thread (.mbox)", mbox.read_bytes(),
+                        file_name=mbox.name, mime="application/mbox",
+                        key=f"download-mbox-{selected['thread_id']}",
+                    )
             for message in messages:
                 eml_path = path / "email_gen" / message["eml_path"]
                 if eml_path.is_file():

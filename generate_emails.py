@@ -6,7 +6,10 @@
 
 import argparse
 import asyncio
+import base64
+import html
 import json
+import mailbox
 import random
 import sqlite3
 import time
@@ -19,7 +22,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAI
 
 ROOT = Path(__file__).parent
 JINJA = Environment(
@@ -70,12 +73,25 @@ SIGNATURE_TEMPLATES = [
     "{name}\n“{quote}”\n{website}",
 ]
 QUOTES = [
-    "Make it simple, but significant.", "Progress is built one step at a time.",
-    "Clarity creates confidence.", "Good work compounds.",
-    "Details make the difference.", "Plan the work, then work the plan.",
-    "Consistency earns trust.", "Small improvements add up.",
-    "Focus on what moves the work forward.", "Measure twice, communicate once.",
+    {"text": "The secret of getting ahead is getting started.", "author": "Mark Twain"},
+    {"text": "Well done is better than well said.", "author": "Benjamin Franklin"},
+    {"text": "Quality means doing it right when no one is looking.", "author": "Henry Ford"},
+    {"text": "The way to get started is to quit talking and begin doing.", "author": "Walt Disney"},
+    {"text": "Success is where preparation and opportunity meet.", "author": "Bobby Unser"},
+    {"text": "If you can dream it, you can do it.", "author": "Walt Disney"},
+    {"text": "It always seems impossible until it’s done.", "author": "Nelson Mandela"},
+    {"text": "The only way to do great work is to love what you do.", "author": "Steve Jobs"},
+    {"text": "You miss 100% of the shots you don’t take.", "author": "Wayne Gretzky"},
+    {"text": "Some people want it to happen, some wish it would happen, others make it happen.", "author": "Michael Jordan"},
 ]
+FONT_VARIANTS = [
+    {"name": "georgia", "family": "Georgia, 'Times New Roman', serif"},
+    {"name": "arial", "family": "Arial, Helvetica, sans-serif"},
+    {"name": "verdana", "family": "Verdana, Geneva, sans-serif"},
+    {"name": "trebuchet", "family": "'Trebuchet MS', Arial, sans-serif"},
+    {"name": "times", "family": "'Times New Roman', Times, serif"},
+]
+FONT_SIZES = [12, 13, 14, 15, 16]
 RUN_CONTEXT = {}
 
 
@@ -353,10 +369,14 @@ def create_personel_email_characteristics(results_folder_path, seed=42):
     characteristics = {}
     for email, person in sorted(people.items()):
         rng = random.Random(f"{seed}:{email}")
+        quote = rng.choice(QUOTES)
+        font = rng.choice(FONT_VARIANTS)
         characteristics[email] = {
             **person, "tone": rng.choice(TONE), "mbti": rng.choice(MBTI),
             "signature_template": rng.randrange(len(SIGNATURE_TEMPLATES)),
-            "quote": rng.choice(QUOTES),
+            "quote": quote["text"], "quote_author": quote["author"],
+            "font_variant": font["name"], "font_family": font["family"],
+            "font_size_px": rng.choice(FONT_SIZES),
             "website": (
                 "https://"
                 + "-".join(
@@ -382,14 +402,62 @@ def _message_date(value, sequence):
 
 
 def _signature(characteristic):
-    return SIGNATURE_TEMPLATES[characteristic["signature_template"]].format(
-        **characteristic
+    values = dict(characteristic)
+    values["quote"] = (
+        f"{characteristic['quote']} — {characteristic['quote_author']}"
     )
+    return SIGNATURE_TEMPLATES[characteristic["signature_template"]].format(**values)
+
+
+def _slug(value):
+    return "".join(
+        character if character.isalnum() else "-"
+        for character in value.lower()
+    ).strip("-")
+
+
+def _generate_brand_logos(characteristics, output, image_model, quality, companies):
+    assets = output / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    companies = sorted(companies)[:3]
+    client = OpenAI()
+    logos = {}
+    generated = 0
+    missing = [
+        company for company in companies
+        if not (assets / f"{_slug(company)}.png").is_file()
+    ]
+    generated_images = {}
+    if missing:
+        print(f"Generating {len(missing)} brand logos in one API batch")
+        response = client.images.generate(
+            model=image_model,
+            prompt=(
+                "Generate a brand logo for each of these companies as separate "
+                f"images, in this exact order: {', '.join(missing)}"
+            ),
+            n=len(missing),
+            size="1024x1024",
+            quality=quality,
+            output_format="png",
+            background="transparent",
+        )
+        generated_images = dict(zip(missing, response.data))
+    for company in companies:
+        path = assets / f"{_slug(company)}.png"
+        if not path.is_file():
+            path.write_bytes(
+                base64.b64decode(generated_images[company].b64_json)
+            )
+            generated += 1
+        logos[company] = path
+    return logos, generated
 
 
 def render(
     email_json_objects, signature_json_path, results_folder_path=None, model=None,
-    started_at=None, elapsed_seconds=None, pricing=None,
+    started_at=None, elapsed_seconds=None, pricing=None, generate_images=False,
+    image_model="gpt-image-2.5-flare", image_quality="low",
 ):
     # takes in a list of email json objects
     # at certain probability, add the following realism components to the email for each individual message:
@@ -400,10 +468,28 @@ def render(
     eml_dir.mkdir(parents=True, exist_ok=True)
     expected_paths = set()
     characteristics = json.loads(Path(signature_json_path).read_text())
+    company_counts = {}
+    for thread in email_json_objects:
+        for item in thread["emails"]:
+            company = characteristics[item["sender"]]["company"]
+            company_counts[company] = company_counts.get(company, 0) + 1
+    message_companies = [
+        company for company, _ in sorted(
+            company_counts.items(), key=lambda item: (-item[1], item[0])
+        )[:3]
+    ]
+    logos, generated_logo_count = (
+        _generate_brand_logos(
+            characteristics, output, image_model, image_quality, message_companies
+        )
+        if generate_images else ({}, 0)
+    )
     flattened = []
+    thread_mbox_paths = set()
     for thread in email_json_objects:
         plan, messages = thread["plan"], thread["emails"]
         references, previous = [], None
+        thread_messages = []
         for item in messages:
             characteristic = characteristics[item["sender"]]
             message_id = f"{plan['thread_id']}-{item['sequence']:02d}@bonsai.local"
@@ -422,13 +508,44 @@ def render(
                 message["In-Reply-To"] = f"<{previous}>"
                 message["References"] = " ".join(f"<{ref}>" for ref in references)
             message.set_content(body)
+            logo_path = logos.get(characteristic["company"])
+            font_family = html.escape(characteristic["font_family"], quote=True)
+            font_size = int(characteristic["font_size_px"])
+            html_body = (
+                "<html><body>"
+                + f'<div style="font-family:{font_family};font-size:{font_size}px">'
+                + "<p>" + html.escape(item["text"]).replace("\n", "<br>") + "</p>"
+                + "<p>" + html.escape(_signature(characteristic)).replace("\n", "<br>") + "</p>"
+            )
+            if logo_path:
+                cid = f"logo-{_slug(characteristic['company'])}@bonsai.local"
+                html_body += (
+                    f'<img src="cid:{cid}" alt="{characteristic["company"]} logo" '
+                      'style="max-width:180px;max-height:100px">'
+                )
+            html_body += "</div></body></html>"
+            message.add_alternative(html_body, subtype="html")
+            if logo_path:
+                message.get_payload()[-1].add_related(
+                    logo_path.read_bytes(), maintype="image", subtype="png",
+                    cid=f"<{cid}>", filename=logo_path.name,
+                )
             eml_path = eml_dir / f"{message_id.replace('@', '_at_')}.eml"
             eml_path.write_bytes(message.as_bytes())
             expected_paths.add(eml_path)
+            thread_messages.append(message)
             flattened.append({
                 **item, "message_id": message_id, "thread_id": plan["thread_id"],
                 "body": body, "eml_path": str(eml_path.relative_to(output)),
+                "logo_path": (
+                    str(logo_path.relative_to(output)) if logo_path else None
+                ),
                 "sender_name": characteristic["name"],
+                "font_variant": characteristic["font_variant"],
+                "font_family": characteristic["font_family"],
+                "font_size_px": characteristic["font_size_px"],
+                "quote": characteristic["quote"],
+                "quote_author": characteristic["quote_author"],
                 "workflow_instance_id": plan["workflow_instance_id"],
                 "workflow": plan["workflow"], "variant": plan["variant"],
                 "domain": plan["domain"], "exception": plan["exception"],
@@ -439,8 +556,25 @@ def render(
             })
             previous = message_id
             references.append(message_id)
+        mbox_dir = output / "threads"
+        mbox_dir.mkdir(parents=True, exist_ok=True)
+        mbox_path = mbox_dir / f"{plan['thread_id']}.mbox"
+        mbox_path.unlink(missing_ok=True)
+        thread_box = mailbox.mbox(mbox_path, create=True)
+        try:
+            for message in thread_messages:
+                thread_box.add(message)
+            thread_box.flush()
+        finally:
+            thread_box.close()
+        thread_mbox_paths.add(mbox_path)
+        for record in flattened[-len(messages):]:
+            record["mbox_path"] = str(mbox_path.relative_to(output))
     for stale_path in eml_dir.glob("*.eml"):
         if stale_path not in expected_paths:
+            stale_path.unlink()
+    for stale_path in (output / "threads").glob("*.mbox"):
+        if stale_path not in thread_mbox_paths:
             stale_path.unlink()
     jsonl = output / "emails.jsonl"
     temporary = jsonl.with_suffix(".jsonl.tmp")
@@ -452,6 +586,10 @@ def render(
     temporary_archive = archive.with_suffix(".zip.tmp")
     with zipfile.ZipFile(temporary_archive, "w", zipfile.ZIP_DEFLATED) as bundle:
         for path in sorted(eml_dir.glob("*.eml")):
+            bundle.write(path, path.relative_to(output))
+        for path in sorted((output / "threads").glob("*.mbox")):
+            bundle.write(path, path.relative_to(output))
+        for path in sorted((output / "assets").glob("*")) if (output / "assets").exists() else []:
             bundle.write(path, path.relative_to(output))
     temporary_archive.replace(archive)
     usage = RUN_CONTEXT.get("usage", {})
@@ -473,6 +611,9 @@ def render(
         "pricing": rates or None, "started_at": started_at,
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "elapsed_seconds": elapsed_seconds,
+        "image_model": image_model if generate_images else None,
+        "image_quality": image_quality if generate_images else None,
+        "logos": len(logos), "logos_generated": generated_logo_count,
     })
     return flattened
 
@@ -491,6 +632,15 @@ def _args():
     parser.add_argument("--input-price", type=float)
     parser.add_argument("--cached-input-price", type=float)
     parser.add_argument("--output-price", type=float)
+    parser.add_argument(
+        "--generate-images", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument("--image-model", default="gpt-image-2.5-flare")
+    parser.add_argument(
+        "--image-quality",
+        choices=["low", "medium", "high", "xhigh", "max", "auto"],
+        default="low",
+    )
     return parser.parse_args()
 
 
@@ -530,7 +680,8 @@ def main():
     generated = generate_emails(workload, model, args.concurrency)
     elapsed = time.perf_counter() - started
     rendered = render(
-        generated, signatures, results, model, started_at, elapsed, pricing
+        generated, signatures, results, model, started_at, elapsed, pricing,
+        args.generate_images, args.image_model, args.image_quality,
     )
     print(
         f"Created {len(generated)} threads and {len(rendered)} messages "
