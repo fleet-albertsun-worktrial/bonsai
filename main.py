@@ -24,18 +24,52 @@ TEMPLATES = ROOT / 'prompt_templates'
 JINJA = Environment(
     loader=FileSystemLoader(TEMPLATES), undefined=StrictUndefined, autoescape=False
 )
-PIPELINE_VERSION = '3'
-DOMAINS = {'order_to_cash': ('order-to-cash',), 'procure_to_pay': ('procure-to-pay',), 'subscription_lifecycle': ('subscription-lifecycle',), 'revenue_and_journal': ('revenue-recognition', 'journal-entry'), 'expenses_and_assets': ('expense-management', 'fixed-asset-lifecycle'), 'treasury_and_reconciliation': ('bank-reconciliation', 'exchange-rate-management'), 'planning_reporting_close': ('budget-management', 'financial-reporting', 'period-close'), 'consolidation_governance': ('consolidation',)}
-WORKFLOW_OUTPUT = {'workflow_mix': [{'name': '...', 'weight': 0.0, 'cadence': 'daily|weekly|monthly|quarterly|annual', 'steps': ['...'], 'exception': None}]}
-WORKFLOW_PLAN_PROMPTS = {
-    'order_to_cash': {'prompt': 'Design varied order-to-cash workflows. Cover estimates, approvals, sales orders, partial/full fulfillment, invoices, payments, deposits, returns, credit memos, and plausible exceptions.', 'json_output': WORKFLOW_OUTPUT},
-    'procure_to_pay': {'prompt': 'Design varied procure-to-pay workflows. Cover requisitions, RFQs, contracts, purchase orders, receipts, three-way matching, bills, payments, vendor credits/returns, and plausible exceptions.', 'json_output': WORKFLOW_OUTPUT},
-    'subscription_lifecycle': {'prompt': 'Design varied subscription-lifecycle workflows. Cover plans, activation, renewals, amendments, suspension, termination, usage, rating, prepaid drawdown, overages, recurring charges, and exceptions.', 'json_output': WORKFLOW_OUTPUT},
-    'revenue_and_journal': {'prompt': 'Design revenue-recognition and general-ledger workflows. Cover ASC 606 arrangements/elements, allocation, ratable and point-in-time recognition, holds, reclasses, accruals, reversals, and balanced posting.', 'json_output': WORKFLOW_OUTPUT},
-    'expenses_and_assets': {'prompt': 'Design employee-expense and fixed-asset workflows. Cover card/cash expenses, receipts, approvals, reimbursements, asset purchases, capitalization, monthly depreciation, disposal, and plausible exceptions.', 'json_output': WORKFLOW_OUTPUT},
-    'treasury_and_reconciliation': {'prompt': 'Design treasury, foreign-exchange, and bank-reconciliation workflows. Cover deposits, disbursements, transfers, cash timing, exchange rates, statement matching, uncleared items, reconciliation, and exceptions.', 'json_output': WORKFLOW_OUTPUT},
-    'planning_reporting_close': {'prompt': 'Design budgeting, forecasting, financial-reporting, and period-close workflows. Cover budget versus actual, rolling forecasts, statements, flux analysis, subledger reconciliation, review, period locks, and adjustments.', 'json_output': WORKFLOW_OUTPUT},
-    'consolidation_governance': {'prompt': 'Design consolidation, intercompany, approval, compliance, and audit workflows. Cover subsidiaries, eliminations, translated balances, segregation of duties, approval thresholds, control testing, evidence, and audit trails.', 'json_output': WORKFLOW_OUTPUT},
+PIPELINE_VERSION = '4'
+CADENCES = {'daily', 'weekly', 'monthly', 'quarterly', 'annual'}
+WORKFLOW_OUTPUT = {'variants': [{'name': '...', 'description': 'One concise sentence explaining this variant.', 'weight': 0.0, 'cadence': 'daily|weekly|monthly|quarterly|annual', 'steps': ['...'], 'exception': None}]}
+WORKFLOWS = {
+    'lead_to_cash': {
+        'domain': 'Customers',
+        'specs': ('order-to-cash',),
+        'prompt': 'Design realistic lead-to-cash variants for product and service sales, from estimate through collection and returns.',
+        'steps': ('create_estimate', 'approve_order', 'create_sales_order', 'fulfill_order', 'issue_invoice', 'receive_payment', 'make_deposit', 'authorize_return', 'issue_credit_memo', 'issue_refund'),
+        'exceptions': ('delayed_fulfillment', 'partial_payment', 'payment_failure', 'customer_return'),
+    },
+    'procure_to_pay': {
+        'domain': 'Operations',
+        'specs': ('procure-to-pay',),
+        'prompt': 'Design realistic procure-to-pay variants from sourcing through receipt, matching, settlement, and vendor returns.',
+        'steps': ('create_requisition', 'request_quotes', 'select_vendor', 'create_purchase_order', 'receive_items', 'match_vendor_bill', 'approve_bill', 'pay_vendor', 'authorize_vendor_return', 'apply_vendor_credit'),
+        'exceptions': ('price_variance', 'quantity_mismatch', 'payment_hold', 'vendor_return'),
+    },
+    'subscription_to_revenue': {
+        'domain': 'Finance',
+        'specs': ('subscription-lifecycle', 'revenue-recognition'),
+        'prompt': 'Design realistic subscription-to-revenue variants spanning subscription changes, usage billing, and ASC 606 recognition.',
+        'steps': ('create_subscription', 'record_change_order', 'record_usage', 'run_rating', 'create_charge', 'issue_invoice', 'create_revenue_arrangement', 'allocate_revenue', 'recognize_revenue', 'reclassify_deferred_revenue'),
+        'exceptions': ('autopay_failure', 'usage_overage', 'recognition_hold', 'early_termination'),
+    },
+    'expense_to_asset': {
+        'domain': 'Finance',
+        'specs': ('expense-management', 'fixed-asset-lifecycle'),
+        'prompt': 'Design realistic expense-to-asset variants for employee reimbursements and fixed-asset capitalization, depreciation, and disposal.',
+        'steps': ('submit_expense', 'attach_receipt', 'approve_expense', 'reimburse_employee', 'identify_capital_purchase', 'capitalize_asset', 'place_in_service', 'run_depreciation', 'dispose_asset'),
+        'exceptions': ('missing_receipt', 'expense_rejected', 'capitalization_review', 'early_disposal'),
+    },
+    'treasury_to_close': {
+        'domain': 'Finance',
+        'specs': ('bank-reconciliation', 'exchange-rate-management', 'journal-entry', 'period-close', 'financial-reporting'),
+        'prompt': 'Design realistic treasury-to-close variants spanning cash, reconciliation, FX, journals, close, and legal-entity reporting.',
+        'steps': ('import_bank_activity', 'match_bank_transactions', 'reconcile_bank_account', 'maintain_exchange_rates', 'revalue_balances', 'post_adjusting_journal', 'review_accounts', 'lock_subledgers', 'close_period', 'publish_entity_reports'),
+        'exceptions': ('unmatched_bank_item', 'reconciliation_difference', 'late_adjustment', 'close_reopened'),
+    },
+    'plan_to_consolidate': {
+        'domain': 'Finance',
+        'specs': ('budget-management', 'financial-reporting', 'consolidation'),
+        'prompt': 'Design realistic plan-to-consolidate variants spanning budgets, forecasts, scenarios, intercompany activity, translation, elimination, and controls.',
+        'steps': ('create_budget', 'create_forecast', 'compare_scenario', 'record_intercompany_activity', 'calculate_consolidated_rates', 'translate_subsidiary_balances', 'eliminate_intercompany', 'run_consolidation', 'publish_consolidated_reports', 'test_controls'),
+        'exceptions': ('forecast_revision', 'translation_difference', 'elimination_difference', 'control_exception'),
+    },
 }
 
 @dataclass
@@ -178,22 +212,63 @@ def _extract_knowledge_base(world_parameters, state_dir, schema_path):
     registry = {'company': knowledge['company'], 'departments': departments, 'employees': employees, 'customers': customers, 'vendors': vendors, 'offerings': offerings}
     _json(registry_path, registry)
 
-def _workflow_context(domain):
+def _workflow_context(workflow_name):
     root = ROOT / 'theseus-stratum-deployed-bundle' / 'envspec' / 'workflows'
-    return '\n\n'.join((root / f'{name}.yml').read_text() for name in DOMAINS[domain] if (root / f'{name}.yml').exists())
+    return '\n\n'.join((root / f'{name}.yml').read_text() for name in WORKFLOWS[workflow_name]['specs'] if (root / f'{name}.yml').exists())
 
-async def _generate_domain_plans(world_parameters, state_dir, schema_path, missing):
+def _normalize_workflow_plan(workflow_name, value):
+    config = WORKFLOWS[workflow_name]
+    allowed_steps, allowed_exceptions = set(config['steps']), set(config['exceptions'])
+    raw_variants = value.get('variants', value.get('workflow_mix', [])) if isinstance(value, dict) else []
+    variants = []
+    for index, raw in enumerate(raw_variants[:5], 1):
+        if not isinstance(raw, dict):
+            continue
+        steps = [step for step in raw.get('steps', []) if step in allowed_steps]
+        if not steps:
+            continue
+        exception = raw.get('exception')
+        if exception not in allowed_exceptions:
+            exception = None
+        cadence = raw.get('cadence')
+        if cadence not in CADENCES:
+            cadence = 'monthly'
+        variants.append({
+            'name': re.sub(r'[^a-z0-9_]+', '_', str(raw.get('name') or f'{workflow_name}_{index}').lower()).strip('_'),
+            'description': str(raw.get('description') or '').strip(),
+            'weight': max(0.0, float(raw.get('weight', 0))),
+            'cadence': cadence,
+            'steps': steps,
+            'exception': exception,
+        })
+    if not variants:
+        variants = [{'name': f'{workflow_name}_standard', 'description': f'Standard {workflow_name.replace("_", " ")} workflow.', 'weight': 1.0, 'cadence': 'monthly', 'steps': list(config['steps']), 'exception': None}]
+    total = sum(variant['weight'] for variant in variants)
+    for variant in variants:
+        variant['weight'] = round((variant['weight'] / total) if total else (1 / len(variants)), 6)
+    return {'domain': config['domain'], 'workflow': workflow_name, 'variants': variants}
+
+async def _generate_workflow_plans(world_parameters, state_dir, schema_path, missing):
     knowledge, registry = (_json(state_dir / 'knowledge_base.json'), _json(state_dir / 'entity_registry.json'))
     shared = json.dumps({'knowledge_base': knowledge, 'entity_counts': {key: len(value) for key, value in registry.items() if isinstance(value, list)}}, separators=(',', ':'))
     client, semaphore = (AsyncOpenAI(), asyncio.Semaphore(4))
 
-    async def generate_domain(domain):
+    async def generate_workflow(workflow_name):
         async with semaphore:
-            config = WORKFLOW_PLAN_PROMPTS[domain]
-            plan = await _ask_json(client, world_parameters.model, _render('workflow_plan.jinja2', domain_prompt=config['prompt'], json_output=json.dumps(config['json_output']), shared_context=shared, schema_context=_schema_context(schema_path), workflow_context=_workflow_context(domain)))
-        plan.setdefault('workflow_mix', [])
-        _json(state_dir / 'domain_plans' / f'{domain}.json', plan)
-    results = await asyncio.gather(*(generate_domain(domain) for domain in missing), return_exceptions=True)
+            config = WORKFLOWS[workflow_name]
+            plan = await _ask_json(client, world_parameters.model, _render(
+                'workflow_plan.jinja2',
+                workflow_prompt=config['prompt'],
+                parent_domain=config['domain'],
+                allowed_steps=', '.join(config['steps']),
+                allowed_exceptions=', '.join(config['exceptions']),
+                json_output=json.dumps(WORKFLOW_OUTPUT),
+                shared_context=shared,
+                schema_context=_schema_context(schema_path),
+                workflow_context=_workflow_context(workflow_name),
+            ))
+        _json(state_dir / 'workflow_plans' / f'{workflow_name}.json', _normalize_workflow_plan(workflow_name, plan))
+    results = await asyncio.gather(*(generate_workflow(workflow_name) for workflow_name in missing), return_exceptions=True)
     errors = [error for error in results if isinstance(error, Exception)]
     if errors:
         raise RuntimeError('; '.join(str(error) for error in errors))
@@ -203,11 +278,12 @@ def _run_generation_phase(phase):
     phase()
 
 def _setup_master(phase): _run_generation_phase(phase)
-def _order_to_cash(phase): _run_generation_phase(phase)
+def _lead_to_cash(phase): _run_generation_phase(phase)
 def _procure_to_pay(phase): _run_generation_phase(phase)
-def _subscriptions_revenue(phase): _run_generation_phase(phase)
-def _expenses_assets(phase): _run_generation_phase(phase)
-def _planning_compliance(phase): _run_generation_phase(phase)
+def _subscription_to_revenue(phase): _run_generation_phase(phase)
+def _expense_to_asset(phase): _run_generation_phase(phase)
+def _treasury_to_close(phase): _run_generation_phase(phase)
+def _plan_to_consolidate(phase): _run_generation_phase(phase)
 
 def _atomic_jsonl(path, values):
     temporary = path.with_suffix(path.suffix + '.tmp')
@@ -216,7 +292,7 @@ def _atomic_jsonl(path, values):
             output.write(json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n')
     temporary.replace(path)
 
-def _write_generated_records(state_dir, schema_path, rows, events):
+def _write_generated_records(state_dir, schema_path, rows, events, workflow_instances, step_executions):
     columns, tables_dir = _schema_columns(schema_path), state_dir / 'tables'
     shutil.rmtree(tables_dir, ignore_errors=True)
     tables_dir.mkdir(parents=True)
@@ -227,15 +303,18 @@ def _write_generated_records(state_dir, schema_path, rows, events):
                   for record in sorted(records, key=lambda row: row['id']))
         _atomic_jsonl(tables_dir / f'{table}.jsonl', values)
     _atomic_jsonl(state_dir / 'event_ledger.jsonl', events)
+    _atomic_jsonl(state_dir / 'workflow_instances.jsonl', workflow_instances)
+    _atomic_jsonl(state_dir / 'workflow_step_executions.jsonl', step_executions)
 
 def _generate_records(world_parameters, state_dir, schema_path):
-    plan_dir = state_dir / 'domain_plans'
-    missing = [domain for domain in DOMAINS if not (plan_dir / f'{domain}.json').exists()]
+    plan_dir = state_dir / 'workflow_plans'
+    missing = [name for name in WORKFLOWS if not (plan_dir / f'{name}.json').exists()]
     if missing:
-        asyncio.run(_generate_domain_plans(world_parameters, state_dir, schema_path, missing))
+        asyncio.run(_generate_workflow_plans(world_parameters, state_dir, schema_path, missing))
     knowledge, registry = (_json(state_dir / 'knowledge_base.json'), _json(state_dir / 'entity_registry.json'))
-    plans = {domain: _json(plan_dir / f'{domain}.json') for domain in DOMAINS}
+    plans = {name: _json(plan_dir / f'{name}.json') for name in WORKFLOWS}
     rng, rows, ids, events = (random.Random(world_parameters.random_seed), defaultdict(list), defaultdict(int), [])
+    workflow_instances, step_executions = [], []
     created = f'{world_parameters.start_date.isoformat()} 09:00:00'
 
     def add(table, **values):
@@ -247,20 +326,57 @@ def _generate_records(world_parameters, state_dir, schema_path):
     def money(cents):
         return round(cents / 100, 2)
 
-    def workflow(domain, index):
-        workflows = plans[domain].get('workflow_mix') or [{'name': f'{domain}_standard', 'steps': [], 'exception': None}]
-        weights = [max(0, float(item.get('weight', 0))) for item in workflows]
+    def workflow(workflow_name, index):
+        variants = plans[workflow_name].get('variants') or [{'name': f'{workflow_name}_standard', 'steps': [], 'exception': None}]
+        weights = [max(0, float(item.get('weight', 0))) for item in variants]
         if not any(weights):
-            return workflows[index % len(workflows)]
-        return rng.choices(workflows, weights=weights, k=1)[0]
+            return variants[index % len(variants)]
+        return rng.choices(variants, weights=weights, k=1)[0]
 
-    def recipe(domain, index):
-        return workflow(domain, index).get('name', f'{domain}_standard')
+    def recipe(workflow_name, index):
+        return workflow(workflow_name, index).get('name', f'{workflow_name}_standard')
 
     def matches(flow, *terms):
-        values = [str(step) for step in flow.get('steps', [])]
-        values.append(str(flow.get('exception') or ''))
-        return any(term in value for value in values for term in terms)
+        values = set(flow.get('steps', []))
+        values.add(flow.get('exception'))
+        return any(term in values for term in terms)
+
+    def trace(workflow_name, flow, instance_key, when, source_table, source_id, amount_cents=0, effects=None, upstream_instance_id=None):
+        instance_id = len(workflow_instances) + 1
+        steps = flow.get('steps', [])
+        effects = effects or []
+        workflow_instances.append({
+            'id': instance_id,
+            'instance_key': instance_key,
+            'domain': WORKFLOWS[workflow_name]['domain'],
+            'workflow': workflow_name,
+            'variant': flow.get('name', f'{workflow_name}_standard'),
+            'description': flow.get('description', ''),
+            'cadence': flow.get('cadence'),
+            'exception': flow.get('exception'),
+            'status': 'completed',
+            'date': when.isoformat(),
+            'source_table': source_table,
+            'source_id': source_id,
+            'amount_cents': amount_cents,
+            'upstream_instance_id': upstream_instance_id,
+        })
+        for sequence, step in enumerate(steps, 1):
+            effect = effects[min(sequence - 1, len(effects) - 1)] if effects else {}
+            step_executions.append({
+                'id': len(step_executions) + 1,
+                'workflow_instance_id': instance_id,
+                'sequence': sequence,
+                'step': step,
+                'status': effect.get('status', 'completed'),
+                'date': when.isoformat(),
+                'affected_table': effect.get('table', source_table if sequence == len(steps) else None),
+                'record_id': effect.get('id', source_id if sequence == len(steps) else None),
+                'operation': effect.get('operation', 'update' if effect else 'observe'),
+                'before_summary': json.dumps(effect.get('before')) if effect.get('before') is not None else None,
+                'after_summary': json.dumps(effect.get('after')) if effect.get('after') is not None else None,
+            })
+        return instance_id
 
     def workflow_date(flow, index, days_before_end=0):
         interval = {'daily': 1, 'weekly': 7, 'monthly': 30, 'quarterly': 91, 'annual': 365}.get(flow.get('cadence'))
@@ -345,13 +461,13 @@ def _generate_records(world_parameters, state_dir, schema_path):
             add('payment_applications', payment_id=payment['id'], invoice_id=invoice['id'], amount=money(amount_cents))
             invoice['amount_paid'], invoice['amount_due'] = (money(amount_cents), round(invoice['total'] - money(amount_cents), 2))
             cash_change += amount_cents
-    def order_to_cash():
+    def lead_to_cash():
         nonlocal cash_change, inventory
         tax_bps = int(knowledge['accounting_policies'].get('tax_rate_basis_points', 825))
         inventory = [item for item in registry['offerings'] if item['kind'] != 'subscription'] or registry['offerings']
         for index in range(world_parameters.num_sales_orders):
-            flow = workflow('order_to_cash', index)
-            flow_name = flow.get('name', 'order_to_cash_standard')
+            flow = workflow('lead_to_cash', index)
+            flow_name = flow.get('name', 'lead_to_cash_standard')
             customer = registry['customers'][index % len(registry['customers'])]
             offering = inventory[index % len(inventory)]
             item, order_date = (item_rows[offering['id']], workflow_date(flow, index, 40))
@@ -359,7 +475,10 @@ def _generate_records(world_parameters, state_dir, schema_path):
             quantity = max(1, round(subtotal / offering['price_cents']))
             tax = round(subtotal * tax_bps / 10000)
             total = subtotal + tax
+            estimate = add('estimates', estimate_number=f'EST-{index + 1:07d}', customer_id=customer['id'], date=order_date.isoformat(), valid_until=clamp(order_date + timedelta(days=30)).isoformat(), title=f'Proposal for {item["name"]}', sales_rep_id=index % len(registry['employees']) + 1, probability=90, expected_close_date=clamp(order_date + timedelta(days=5)).isoformat(), subsidiary_id=1, memo=flow_name, subtotal=money(subtotal), discount_total=0, tax_total=money(tax), total=money(total), document_data=json.dumps({'workflow': flow_name}), document_file_name=f'EST-{index + 1:07d}.json', document_content_type='application/json', status='accepted', created_by_id=1)
+            add('estimate_lines', estimate_id=estimate['id'], line_number=1, item_id=item['id'], description=item['name'], quantity=quantity, rate=money(offering['price_cents']), amount=money(subtotal), tax_code_id=1, department_id=1, class_id=1, location_id=1)
             order = add('sales_orders', order_number=f'SO-{index + 1:07d}', customer_id=customer['id'], date=order_date.isoformat(), ship_date=clamp(order_date + timedelta(days=2)).isoformat(), expected_close_date=clamp(order_date + timedelta(days=5)).isoformat(), payment_term_id=1, currency='USD', exchange_rate=1, subsidiary_id=1, department_id=1, class_id=1, location_id=1, billing_address=customer['address'], shipping_address=customer['address'], ship_method='Ground', sales_rep_id=index % len(registry['employees']) + 1, memo=flow_name, subtotal=money(subtotal), tax_total=money(tax), total=money(total), amount_fulfilled=money(total), amount_billed=money(total), amount_remaining=0, status='closed', created_by_id=1)
+            estimate['linked_sales_order_id'] = order['id']
             line = add('sales_order_lines', sales_order_id=order['id'], line_number=1, item_id=item['id'], description=item['name'], quantity=quantity, quantity_fulfilled=quantity, quantity_billed=quantity, rate=money(offering['price_cents']), amount=money(subtotal), tax_code_id=1, tax_rate=tax_bps / 100, gross_amount=money(total), department_id=1, class_id=1, location_id=1, is_closed=1)
             fulfillment_date = clamp(order_date + timedelta(days=rng.randint(8, 20) if matches(flow, 'delay', 'backorder') else rng.randint(1, 4)))
             add('item_fulfillments', fulfillment_number=f'FUL-{index + 1:07d}', sales_order_id=order['id'], date=fulfillment_date.isoformat(), ship_date=fulfillment_date.isoformat(), ship_method='Ground', carrier='UPS', tracking_number=f'1Z{index + 1:016d}', ship_to_address=customer['address'], location_id=1, subsidiary_id=1, status='shipped', created_by_id=1)
@@ -368,10 +487,16 @@ def _generate_records(world_parameters, state_dir, schema_path):
             add('invoice_lines', invoice_id=invoice['id'], line_number=1, item_id=item['id'], description=item['name'], quantity=quantity, units=offering['unit'], rate=money(offering['price_cents']), amount=money(subtotal), tax_code_id=1, tax_rate=tax_bps / 100, gross_amount=money(total), department_id=1, class_id=1, location_id=1, sales_order_line_id=line['id'])
             entry = journal(invoice_date, f"Invoice {invoice['invoice_number']}", [(accounts['ar']['id'], total, 0, {'invoice_id': invoice['id'], 'customer_id': customer['id']}), (accounts['revenue']['id'], 0, subtotal, {'invoice_id': invoice['id'], 'customer_id': customer['id']}), (accounts['sales_tax']['id'], 0, tax, {'invoice_id': invoice['id'], 'customer_id': customer['id']})], 'invoice', invoice['id'])
             invoice['journal_entry_id'] = entry['id']
-            paid = total // 2 if matches(flow, 'partial_payment', 'payment_failure', 'autopay_failure') or rng.random() < world_parameters.exception_rate else total
+            paid = total // 2 if matches(flow, 'partial_payment', 'payment_failure') or rng.random() < world_parameters.exception_rate else total
             receive_payment(invoice, customer['id'], clamp(invoice_date + timedelta(days=rng.randint(3, 20))), paid)
             customer_rows[customer['id']]['balance'] += money(total - paid)
             events.append({'id': f'sale:{index + 1}', 'type': 'sale', 'date': order_date.isoformat(), 'source_table': 'sales_orders', 'source_id': order['id'], 'amount_cents': total, 'recipe': flow_name, 'cadence': flow.get('cadence'), 'steps': flow.get('steps', []), 'exception': flow.get('exception')})
+            trace('lead_to_cash', flow, f'sale:{index + 1}', order_date, 'sales_orders', order['id'], total, [
+                {'table': 'sales_orders', 'id': order['id'], 'operation': 'insert', 'after': {'status': order['status'], 'total': order['total']}},
+                {'table': 'item_fulfillments', 'id': index + 1, 'operation': 'insert', 'after': {'status': 'shipped'}},
+                {'table': 'invoices', 'id': invoice['id'], 'operation': 'insert', 'after': {'total': invoice['total'], 'amount_due': invoice['amount_due']}},
+                {'table': 'payments', 'id': ids['payments'], 'operation': 'insert', 'after': {'amount_cents': paid}},
+            ])
     def procure_to_pay():
         nonlocal cash_change
         purchase_count = max(24, world_parameters.num_sales_orders // 4)
@@ -383,9 +508,13 @@ def _generate_records(world_parameters, state_dir, schema_path):
             item, purchase_date = (item_rows[offering['id']], workflow_date(flow, index, 35))
             quantity = rng.randint(2, 20)
             expected = offering['cost_cents'] * quantity
+            requisition = add('requisitions', requisition_number=f'REQ-{index + 1:07d}', requestor_id=index % len(registry['employees']) + 1, date=purchase_date.isoformat(), needed_by_date=clamp(purchase_date + timedelta(days=14)).isoformat(), department_id=2, subsidiary_id=1, memo=flow_name, estimated_total=money(expected), approved_by_id=1, approved_date=purchase_date.isoformat(), status='approved', created_by_id=1)
+            rfq = add('requests_for_quote', rfq_number=f'RFQ-{index + 1:07d}', name=f'Source {item["name"]}', open_date=purchase_date.isoformat(), close_date=clamp(purchase_date + timedelta(days=3)).isoformat(), terms='Net 30', special_instructions=flow_name, subsidiary_id=1, status='closed', created_by_id=1)
+            add('request_for_quote_lines', rfq_id=rfq['id'], line_number=1, item_id=item['id'], description=item['name'], quantity=quantity)
             variance = round(expected * rng.choice((0.01, 0.02, 0.03))) if matches(flow, 'variance', 'mismatch', 'overbill') or rng.random() < world_parameters.exception_rate else 0
             actual = expected + variance
             order = add('purchase_orders', po_number=f'PO-{index + 1:07d}', vendor_id=vendor['id'], date=purchase_date.isoformat(), expected_date=clamp(purchase_date + timedelta(days=7)).isoformat(), subsidiary_id=1, total=money(expected), memo=flow_name, approval_status='approved', ship_to_location_id=1, ship_to_address='100 Market Street, San Francisco, CA 94105', payment_term_id=1, status='fully_billed')
+            add('requisition_lines', requisition_id=requisition['id'], line_number=1, item_id=item['id'], description=item['name'], quantity=quantity, units=offering['unit'], estimated_rate=money(offering['cost_cents']), estimated_amount=money(expected), preferred_vendor_id=vendor['id'], is_ordered=1, linked_po_id=order['id'])
             add('purchase_order_lines', purchase_order_id=order['id'], line_number=1, item_id=item['id'], description=item['name'], quantity=quantity, quantity_received=quantity, quantity_billed=quantity, rate=money(offering['cost_cents']), amount=money(expected), department_id=2, class_id=1, location_id=1)
             receipt_date = clamp(purchase_date + timedelta(days=7))
             receipt = add('item_receipts', receipt_number=f'IR-{index + 1:07d}', purchase_order_id=order['id'], vendor_id=vendor['id'], date=receipt_date.isoformat(), location_id=1, subsidiary_id=1, memo=order['po_number'], status='received', created_by_id=1)
@@ -407,7 +536,13 @@ def _generate_records(world_parameters, state_dir, schema_path):
             vendor_rows[vendor['id']]['balance'] += money(actual - paid)
             cash_change -= paid
             events.append({'id': f'purchase:{index + 1}', 'type': 'purchase', 'date': purchase_date.isoformat(), 'source_table': 'purchase_orders', 'source_id': order['id'], 'amount_cents': actual, 'recipe': flow_name, 'cadence': flow.get('cadence'), 'steps': flow.get('steps', []), 'exception': flow.get('exception')})
-    def subscriptions_revenue():
+            trace('procure_to_pay', flow, f'purchase:{index + 1}', purchase_date, 'purchase_orders', order['id'], actual, [
+                {'table': 'purchase_orders', 'id': order['id'], 'operation': 'insert', 'after': {'total': order['total']}},
+                {'table': 'item_receipts', 'id': receipt['id'], 'operation': 'insert', 'after': {'status': receipt['status']}},
+                {'table': 'bills', 'id': bill['id'], 'operation': 'insert', 'after': {'total': bill['total'], 'amount_due': bill['amount_due']}},
+                {'table': 'bill_payments', 'id': payment['id'], 'operation': 'insert', 'after': {'amount': payment['amount']}},
+            ])
+    def subscription_to_revenue():
         subscription_offerings = [x for x in registry['offerings'] if x['kind'] == 'subscription'] or [registry['offerings'][-1]]
         offering = subscription_offerings[0]
         subscription_department = next((department for department in registry['departments'] if department['key'] == 'customer_success'), registry['departments'][0])
@@ -415,8 +550,8 @@ def _generate_records(world_parameters, state_dir, schema_path):
         add('subscription_plan_lines', subscription_plan_id=plan['id'], line_number=1, item_id=item_rows[offering['id']]['id'], subscription_line_type='recurring', quantity=1, include_in_renewal=1, is_required=1, proration_option='prorate')
         rating_runs = {period['id']: add('rating_runs', run_date=period['end_date'], subscription_filter='active', records_processed=world_parameters.num_subscriptions, charges_created=world_parameters.num_subscriptions, total_amount=money(offering['price_cents'] * world_parameters.num_subscriptions), status='completed', created_by_id=1, completed_date=period['end_date']) for period in periods}
         for index in range(world_parameters.num_subscriptions):
-            flow = workflow('subscription_lifecycle', index)
-            flow_name = flow.get('name', 'subscription_lifecycle_standard')
+            flow = workflow('subscription_to_revenue', index)
+            flow_name = flow.get('name', 'subscription_to_revenue_standard')
             customer = registry['customers'][index % len(registry['customers'])]
             subscription_start = workflow_date(flow, index)
             active_periods = [period for period in periods if period['end_date'] >= subscription_start.isoformat()]
@@ -440,15 +575,16 @@ def _generate_records(world_parameters, state_dir, schema_path):
                 customer_rows[customer['id']]['balance'] += money(mrr - paid)
                 recognition_date = date.fromisoformat(period['end_date'])
                 recognition_entry = journal(recognition_date, f"Revenue recognition {subscription['subscription_number']}", [(accounts['deferred_revenue']['id'], mrr, 0, {}), (accounts['subscription_revenue']['id'], 0, mrr, {})], 'revenue_recognition', revenue_plan['id'])
-                add('revenue_plan_lines', plan_id=revenue_plan['id'], period_id=period['id'], recognition_date=recognition_date.isoformat(), amount=money(mrr), percent=round(100 / len(active_periods), 6), journal_entry_id=recognition_entry['id'], posted_date=recognition_date.isoformat(), notes=recipe('revenue_and_journal', month_index), status='posted')
+                add('revenue_plan_lines', plan_id=revenue_plan['id'], period_id=period['id'], recognition_date=recognition_date.isoformat(), amount=money(mrr), percent=round(100 / len(active_periods), 6), journal_entry_id=recognition_entry['id'], posted_date=recognition_date.isoformat(), notes=flow_name, status='posted')
                 add('revenue_recognition_journals', journal_number=f"RRJ-{ids['revenue_recognition_journals'] + 1:07d}", revenue_plan_id=revenue_plan['id'], period_id=period['id'], amount=money(mrr), deferred_revenue_account_id=accounts['deferred_revenue']['id'], recognized_revenue_account_id=accounts['subscription_revenue']['id'], journal_entry_id=recognition_entry['id'], status='posted', posted_date=recognition_date.isoformat())
                 events.append({'id': f"subscription:{index + 1}:{period['id']}", 'type': 'subscription_billing', 'date': bill_date.isoformat(), 'source_table': 'subscriptions', 'source_id': subscription['id'], 'amount_cents': mrr, 'recipe': flow_name, 'cadence': flow.get('cadence'), 'steps': flow.get('steps', []), 'exception': flow.get('exception')})
-    def expenses_assets():
+                trace('subscription_to_revenue', flow, f"subscription:{index + 1}:{period['id']}", bill_date, 'subscriptions', subscription['id'], mrr)
+    def expense_to_asset():
         nonlocal cash_change
         expense_count = max(24, world_parameters.num_employees)
         for index in range(expense_count):
-            flow = workflow('expenses_and_assets', index)
-            flow_name = flow.get('name', 'expenses_and_assets_standard')
+            flow = workflow('expense_to_asset', index)
+            flow_name = flow.get('name', 'expense_to_asset_standard')
             employee = registry['employees'][index % len(registry['employees'])]
             expense_date, amount = (workflow_date(flow, index), rng.randint(4000, 60000))
             report = add('expense_reports', report_number=f'EXP-{index + 1:06d}', employee_id=employee['id'], report_date=expense_date.isoformat(), submit_date=expense_date.isoformat(), total=money(amount), subsidiary_id=1, department_id=employee['department_id'], memo=flow_name, reimbursement_amount=money(amount), status='paid')
@@ -456,44 +592,64 @@ def _generate_records(world_parameters, state_dir, schema_path):
             journal(expense_date, f"Expense report {report['report_number']}", [(accounts['operating_expense']['id'], amount, 0, {}), (accounts['cash']['id'], 0, amount, {})], 'expense_report', report['id'])
             cash_change -= amount
             events.append({'id': f'expense:{index + 1}', 'type': 'employee_expense', 'date': expense_date.isoformat(), 'source_table': 'expense_reports', 'source_id': report['id'], 'amount_cents': amount, 'recipe': flow_name, 'cadence': flow.get('cadence'), 'steps': flow.get('steps', []), 'exception': flow.get('exception')})
+            trace('expense_to_asset', flow, f'expense:{index + 1}', expense_date, 'expense_reports', report['id'], amount)
         for index in range(min(12, world_parameters.num_employees)):
             cost = rng.randint(150000, 1500000)
             monthly = (cost - cost // 10) // 36
-            asset = add('fixed_assets', asset_number=f'FA-{index + 1:04d}', name=f'Office Asset {index + 1}', description=recipe('expenses_and_assets', index), asset_type='office_equipment', acquisition_date=start.isoformat(), placed_in_service_date=start.isoformat(), original_cost=money(cost), residual_value=money(cost // 10), useful_life_months=36, depreciation_method='straight_line', accumulated_depreciation=money(monthly * len(periods)), current_book_value=money(max(cost // 10, cost - monthly * len(periods))), location_id=1, custodian_id=index + 1, subsidiary_id=1, asset_account_id=accounts['fixed_assets']['id'], depreciation_account_id=accounts['depreciation']['id'], accumulated_depr_account_id=accounts['accum_depr']['id'], status='active')
+            flow = workflow('expense_to_asset', index)
+            asset = add('fixed_assets', asset_number=f'FA-{index + 1:04d}', name=f'Office Asset {index + 1}', description=flow.get('name'), asset_type='office_equipment', acquisition_date=start.isoformat(), placed_in_service_date=start.isoformat(), original_cost=money(cost), residual_value=money(cost // 10), useful_life_months=36, depreciation_method='straight_line', accumulated_depreciation=money(monthly * len(periods)), current_book_value=money(max(cost // 10, cost - monthly * len(periods))), location_id=1, custodian_id=index + 1, subsidiary_id=1, asset_account_id=accounts['fixed_assets']['id'], depreciation_account_id=accounts['depreciation']['id'], accumulated_depr_account_id=accounts['accum_depr']['id'], status='active')
             for period_index, period in enumerate(periods, 1):
                 amount = min(monthly, max(0, cost - cost // 10 - monthly * (period_index - 1)))
                 add('depreciation_schedules', fixed_asset_id=asset['id'], period_id=period['id'], depreciation_amount=money(amount), accumulated_depreciation=money(amount * period_index), book_value=money(cost - amount * period_index), is_posted=1)
                 journal(date.fromisoformat(period['end_date']), f"Depreciation {asset['asset_number']}", [(accounts['depreciation']['id'], amount, 0, {}), (accounts['accum_depr']['id'], 0, amount, {})], 'depreciation', asset['id'])
-    def planning_compliance():
+            trace('expense_to_asset', flow, f'asset:{index + 1}', start, 'fixed_assets', asset['id'], cost)
+    def plan_to_consolidate():
+        governance_flow = workflow('plan_to_consolidate', 0)
         for department in registry['departments']:
             annual = rng.randint(8000000, 24000000)
-            budget = add('budgets', budget_name=f"{department['name']} Operating Budget", fiscal_year=start.year, version=1, budget_type='operating', subsidiary_id=1, department_id=department['id'], total_amount=money(annual), created_by_id=1, approved_by_id=1, approval_date=start.isoformat(), notes=recipe('planning_reporting_close', department['id']), status='approved')
+            flow = workflow('plan_to_consolidate', department['id'])
+            budget = add('budgets', budget_name=f"{department['name']} Operating Budget", fiscal_year=start.year, version=1, budget_type='operating', subsidiary_id=1, department_id=department['id'], total_amount=money(annual), created_by_id=1, approved_by_id=1, approval_date=start.isoformat(), notes=flow.get('name'), status='approved')
+            forecast = add('forecasts', forecast_name=f"{department['name']} Rolling Forecast", fiscal_year=start.year, period_start=start.isoformat(), period_end=end.isoformat(), version=1, forecast_type='rolling', subsidiary_id=1, created_by_id=1, finalized_by_id=1, finalized_date=end.isoformat(), notes=flow.get('name'), status='final')
             monthly, remainder = divmod(annual, len(periods))
             pieces = [monthly] * (len(periods) - 1) + [monthly + remainder]
             for period, amount in zip(periods, pieces):
                 add('budget_lines', budget_id=budget['id'], account_id=accounts['operating_expense']['id'], period_id=period['id'], amount=money(amount), category='operating', department_id=department['id'], class_id=3, location_id=1, notes='Monthly allocation')
+                add('forecast_lines', forecast_id=forecast['id'], account_id=accounts['operating_expense']['id'], period_id=period['id'], amount=money(round(amount * 1.03)), confidence_level='medium', driver='headcount_and_inflation', growth_rate=3, notes='Rolling forecast')
+            trace('plan_to_consolidate', flow, f"budget:{department['id']}", start, 'budgets', budget['id'], annual)
+        for period in periods:
+            consolidation = add('consolidation_processes', consolidation_id=f'CONS-{period["id"]:04d}', name=f'{period["period_name"]} Consolidation', period_id=period['id'], parent_subsidiary_id=1, consolidation_type='standard', exchange_rate_date=period['end_date'], exchange_rate_type='period_end', completed_date=period['end_date'], posted_date=period['end_date'], created_by_id=1, approved_by_id=1, status='complete')
+            add('consolidation_subsidiaries', consolidation_id=consolidation['id'], subsidiary_id=1, ownership_percent=100, consolidation_method='full', minority_interest_percent=0)
+            for account in accounts.values():
+                add('consolidation_translations', consolidation_id=consolidation['id'], subsidiary_id=1, account_id=account['id'], account_type=account['type'], local_currency='USD', local_amount=account.get('current_balance', 0), exchange_rate=1, rate_type='identity', translated_amount=account.get('current_balance', 0), target_currency='USD')
+        for index, (name, risk) in enumerate((('Journal approval', 'financial_reporting'), ('Vendor master review', 'procurement'), ('Revenue schedule review', 'revenue'), ('Bank reconciliation', 'cash')), 1):
+            control = add('compliance_controls', control_id=f'CTRL-{index:03d}', name=name, description=governance_flow.get('name'), control_type='preventive' if index < 3 else 'detective', risk_area=risk, process=risk, owner_id=1, frequency='monthly', automation_level='semi_automated', evidence_type='system_report', last_test_date=end.isoformat(), test_result='effective', status='active')
+            add('compliance_tests', test_id=f'TEST-{index:03d}', control_id=control['id'], test_date=end.isoformat(), tester_id=1, test_procedure=f'Inspect {name.lower()}', sample_size=25, exceptions_found=0, conclusion='Operating effectively', evidence='Generated transaction sample', status='complete')
+        trace('plan_to_consolidate', governance_flow, 'controls:annual', end, 'compliance_controls', 1)
+    def treasury_to_close():
+        flow = workflow('treasury_to_close', 0)
         for report_type, report_name in (('income_statement', 'Income Statement'), ('balance_sheet', 'Balance Sheet'), ('cash_flow', 'Statement of Cash Flows')):
-            report = add('financial_reports', report_id=report_type.upper(), name=report_name, description=recipe('planning_reporting_close', ids['financial_reports']), report_type=report_type, layout='standard', columns='["current","prior"]', rows='["account","amount"]', filters='{"subsidiary_id":1}', is_public=1, owner_id=1, subsidiary_id=1, accounting_book_id=1, date_range_type='period')
+            report = add('financial_reports', report_id=report_type.upper(), name=report_name, description=flow.get('name'), report_type=report_type, layout='standard', columns='["current","prior"]', rows='["account","amount"]', filters='{"subsidiary_id":1}', is_public=1, owner_id=1, subsidiary_id=1, accounting_book_id=1, date_range_type='period')
             for period in periods:
                 add('report_snapshots', report_id=report['id'], snapshot_date=period['end_date'], as_of_date=period['end_date'], period_id=period['id'], created_by_id=1, data=json.dumps({'report': report_type, 'period': period['period_name'], 'status': 'final'}), notes='Generated from the event ledger')
-        for index, (name, risk) in enumerate((('Journal approval', 'financial_reporting'), ('Vendor master review', 'procurement'), ('Revenue schedule review', 'revenue'), ('Bank reconciliation', 'cash')), 1):
-            control = add('compliance_controls', control_id=f'CTRL-{index:03d}', name=name, description=recipe('consolidation_governance', index), control_type='preventive' if index < 3 else 'detective', risk_area=risk, process=risk, owner_id=1, frequency='monthly', automation_level='semi_automated', evidence_type='system_report', last_test_date=end.isoformat(), test_result='effective', status='active')
-            add('compliance_tests', test_id=f'TEST-{index:03d}', control_id=control['id'], test_date=end.isoformat(), tester_id=1, test_procedure=f'Inspect {name.lower()}', sample_size=25, exceptions_found=0, conclusion='Operating effectively', evidence='Generated transaction sample', status='complete')
+            trace('treasury_to_close', flow, f'report:{report_type}', end, 'financial_reports', report['id'])
         bank['current_balance'] = bank['available_balance'] = money(opening_cash + cash_change)
         for period in periods:
             add('reconciliations', bank_account_id=bank['id'], statement_date=period['end_date'], statement_ending_balance=bank['current_balance'], cleared_balance=bank['current_balance'], uncleared_balance=0, difference=0, reconciled_by_id=1, reconciled_date=period['end_date'], status='reconciled')
         for event in events:
             add('audit_trail_entries', entry_id=f"AUD-{ids['audit_trail_entries'] + 1:08d}", timestamp=f"{event['date']} 17:00:00", user_id=(event['source_id'] - 1) % len(registry['employees']) + 1, action='create', record_type=event['source_table'], record_id=event['source_id'], old_value='{}', new_value=json.dumps(event, sort_keys=True), field_name='record', ip_address=f"10.0.{event['source_id'] % 255}.{event['source_id'] * 7 % 255}", session_id=f"session-{event['source_id']:08d}", subsidiary_id=1)
-        _write_generated_records(state_dir, schema_path, rows, events)
+    def finalize():
+        _write_generated_records(state_dir, schema_path, rows, events, workflow_instances, step_executions)
         _json(state_dir / 'volume_plan.json', {'target_size_gb': world_parameters.target_size_gb, 'strategy': 'full-record audit snapshots'})
         marker = state_dir / 'records.complete'
         marker.write_text('complete\n')
     _setup_master(setup_master)
-    _order_to_cash(order_to_cash)
+    _lead_to_cash(lead_to_cash)
     _procure_to_pay(procure_to_pay)
-    _subscriptions_revenue(subscriptions_revenue)
-    _expenses_assets(expenses_assets)
-    _planning_compliance(planning_compliance)
+    _subscription_to_revenue(subscription_to_revenue)
+    _expense_to_asset(expense_to_asset)
+    _treasury_to_close(treasury_to_close)
+    _plan_to_consolidate(plan_to_consolidate)
+    finalize()
 
 CHECKS = []
 
@@ -552,6 +708,59 @@ def quantity_reconciliation(db, _):
 def revenue_plan_totals(db, _):
     return violations(db, '\n        SELECT p.id FROM revenue_plans p JOIN revenue_plan_lines l ON l.plan_id=p.id\n        GROUP BY p.id HAVING ABS(SUM(l.amount)-p.total_amount)>.005\n    ')
 
+@verifier('workflows')
+def workflow_provenance(db, _):
+    missing = violations(db, '''
+        SELECT wi.id FROM workflow_instances wi
+        LEFT JOIN workflow_step_executions ws ON ws.workflow_instance_id=wi.id
+        GROUP BY wi.id HAVING COUNT(ws.id)=0
+    ''')
+    unknown = violations(db, '''
+        SELECT id FROM workflow_instances
+        WHERE workflow NOT IN (
+          'lead_to_cash','procure_to_pay','subscription_to_revenue',
+          'expense_to_asset','treasury_to_close','plan_to_consolidate'
+        )
+    ''')
+    return [f'no_steps:{value}' for value in missing] + [f'unknown:{value}' for value in unknown]
+
+@verifier('rules')
+def receivables_reconciliation(db, _):
+    return violations(db, '''
+        SELECT i.id FROM invoices i
+        LEFT JOIN payment_applications p ON p.invoice_id=i.id
+        GROUP BY i.id
+        HAVING ABS(COALESCE(SUM(p.amount),0)-i.amount_paid)>.005
+           OR ABS(i.total-i.amount_paid-i.amount_due)>.005
+    ''')
+
+@verifier('rules')
+def payables_reconciliation(db, _):
+    return violations(db, '''
+        SELECT b.id FROM bills b
+        LEFT JOIN bill_payment_applications p ON p.bill_id=b.id
+        GROUP BY b.id
+        HAVING ABS(COALESCE(SUM(p.amount),0)-b.amount_paid)>.005
+           OR ABS(b.total-b.amount_paid-b.amount_due)>.005
+    ''')
+
+@verifier('rules')
+def cash_reconciliation(db, _):
+    return violations(db, '''
+        SELECT d.id FROM deposits d
+        LEFT JOIN payments p ON p.deposit_id=d.id
+        GROUP BY d.id HAVING ABS(COALESCE(SUM(p.amount),0)-d.total)>.005
+    ''')
+
+@verifier('workflows')
+def workflow_effects(db, _):
+    return violations(db, '''
+        SELECT wi.id FROM workflow_instances wi
+        LEFT JOIN workflow_step_executions ws
+          ON ws.workflow_instance_id=wi.id AND ws.affected_table IS NOT NULL
+        GROUP BY wi.id HAVING COUNT(ws.id)=0
+    ''')
+
 def run_all(database, knowledge_base):
     with sqlite3.connect(database) as db:
         results = []
@@ -588,6 +797,39 @@ def _compile(output_path, state_dir, schema_path, world_parameters):
     db.execute('PRAGMA synchronous=OFF')
     db.execute('PRAGMA foreign_keys=OFF')
     db.executescript(table_sql)
+    db.executescript('''
+        CREATE TABLE workflow_instances (
+            id INTEGER PRIMARY KEY,
+            instance_key TEXT NOT NULL UNIQUE,
+            domain TEXT NOT NULL,
+            workflow TEXT NOT NULL,
+            variant TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            cadence TEXT,
+            exception TEXT,
+            status TEXT NOT NULL,
+            date TEXT NOT NULL,
+            source_table TEXT,
+            source_id INTEGER,
+            amount_cents INTEGER DEFAULT 0,
+            upstream_instance_id INTEGER,
+            FOREIGN KEY (upstream_instance_id) REFERENCES workflow_instances(id)
+        );
+        CREATE TABLE workflow_step_executions (
+            id INTEGER PRIMARY KEY,
+            workflow_instance_id INTEGER NOT NULL,
+            sequence INTEGER NOT NULL,
+            step TEXT NOT NULL,
+            status TEXT NOT NULL,
+            date TEXT NOT NULL,
+            affected_table TEXT,
+            record_id INTEGER,
+            operation TEXT NOT NULL DEFAULT 'observe',
+            before_summary TEXT,
+            after_summary TEXT,
+            FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id)
+        );
+    ''')
     files = {path.stem: path for path in (state_dir / 'tables').glob('*.jsonl')}
     for table in _foreign_key_order(db, files):
         with files[table].open() as source:
@@ -607,6 +849,20 @@ def _compile(output_path, state_dir, schema_path, world_parameters):
                     batch.clear()
             if batch:
                 db.executemany(sql, batch)
+    for name in ('workflow_instances', 'workflow_step_executions'):
+        path = state_dir / f'{name}.jsonl'
+        if not path.exists():
+            continue
+        records = [json.loads(line) for line in path.read_text().splitlines() if line]
+        if not records:
+            continue
+        columns = list(records[0])
+        quoted_columns = ','.join(f'"{column}"' for column in columns)
+        placeholders = ','.join('?' for _ in columns)
+        db.executemany(
+            f'INSERT INTO "{name}" ({quoted_columns}) VALUES ({placeholders})',
+            [[record.get(column) for column in columns] for record in records],
+        )
     db.commit()
     target = int(world_parameters.target_size_gb * 1024 ** 3)
     audit_id = db.execute('SELECT COALESCE(MAX(id), 0) FROM audit_trail_entries').fetchone()[0]

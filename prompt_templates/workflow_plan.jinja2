@@ -1,13 +1,23 @@
-{{ domain_prompt }}
+Design 1-5 mutually exclusive variants of this end-to-end workflow:
 
+{{ workflow_prompt }}
+
+Parent Oracle domain: {{ parent_domain }}
 Shared world: {{ shared_context }}
 Relevant schema: {{ schema_context }}
-Workflow specifications: {{ workflow_context }}
+Authoritative workflow specifications:
+{{ workflow_context }}
 
-Return JSON only matching this shape:
+Supported operations: {{ allowed_steps }}
+Supported exceptions: {{ allowed_exceptions }}
+
+Return JSON only matching:
 {{ json_output }}
 
-Use at most five workflows. Give weights totaling approximately 1. Cadence must
-be daily, weekly, monthly, quarterly, or annual. Use concise snake_case names
-for steps and exceptions. Set exception to null for a standard workflow.
-Do not create entities, IDs, table rows, balances, totals, or journal entries.
+Each variant must describe one plausible path from its trigger to a terminal
+outcome. Use only the supported operations and exceptions supplied above, and
+list operations in causal order. Give weights totaling approximately 1.
+Cadence must be daily, weekly, monthly, quarterly, or annual. Use concise
+snake_case names. Give each variant a concise, plain-language, one-sentence
+description of what makes that path distinct. Set exception to null for a standard path. Do not create
+entities, records, IDs, amounts, balances, totals, or journal entries.
