@@ -16,7 +16,9 @@ Return JSON only matching:
 
 Each variant must describe one plausible path from its trigger to a terminal
 outcome. Use only the supported operations and exceptions supplied above, and
-list operations in causal order. Give weights totaling approximately 1.
+list operation objects in causal order. Optional parameters must be simple,
+declarative values such as portion, delay_days, or reason; never create IDs,
+dates, money, SQL, or record contents. Give weights totaling approximately 1.
 Cadence must be daily, weekly, monthly, quarterly, or annual. Use concise
 snake_case names. Give each variant a concise, plain-language, one-sentence
 description of what makes that path distinct. Set exception to null for a standard path. Do not create

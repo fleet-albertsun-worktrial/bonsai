@@ -91,6 +91,8 @@ def _app():
         "payables_reconciliation": "Vendor-bill payments and open balances reconcile.",
         "cash_reconciliation": "Deposits reconcile to included customer payments.",
         "workflow_effects": "Every workflow instance records at least one row effect.",
+        "workflow_dates": "Workflow step dates never move backward.",
+        "repeated_payments_are_distinct": "Repeated payment steps create distinct payment records.",
     }
     verifier_rows = [
         {
@@ -107,7 +109,7 @@ def _app():
     size = statistics.get("database_size_bytes", required[1].stat().st_size)
     passed = sum(bool(item.get("passed")) for item in verifiers)
     metrics = (
-        ("Database size", f"{size / 1024**3:.2f} GB"),
+        ("Database size", f"{size / 1000**3:.2f} GB"),
         ("Elapsed", f"{elapsed:.2f} s"),
         ("Tables", f"{len(tables):,}"),
         ("Rows generated", f"{sum(row_counts.values()):,}"),
@@ -268,7 +270,7 @@ def _app():
                 "database records."
             )
             labels = {
-                row[0]: f"{row[1]} · {row[2]} · {row[4]}"
+                row[0]: f"{row[3]} · {row[1]} · {row[2]} · {row[4]}"
                 for row in instances
             }
             selected_instance = st.selectbox(

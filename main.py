@@ -26,7 +26,7 @@ JINJA = Environment(
 )
 PIPELINE_VERSION = '4'
 CADENCES = {'daily', 'weekly', 'monthly', 'quarterly', 'annual'}
-WORKFLOW_OUTPUT = {'variants': [{'name': '...', 'description': 'One concise sentence explaining this variant.', 'weight': 0.0, 'cadence': 'daily|weekly|monthly|quarterly|annual', 'steps': ['...'], 'exception': None}]}
+WORKFLOW_OUTPUT = {'variants': [{'name': '...', 'description': 'One concise sentence explaining this variant.', 'weight': 0.0, 'cadence': 'daily|weekly|monthly|quarterly|annual', 'steps': [{'operation': '...', 'parameters': {}}], 'exception': None}]}
 WORKFLOWS = {
     'lead_to_cash': {
         'domain': 'Customers',
@@ -224,7 +224,12 @@ def _normalize_workflow_plan(workflow_name, value):
     for index, raw in enumerate(raw_variants[:5], 1):
         if not isinstance(raw, dict):
             continue
-        steps = [step for step in raw.get('steps', []) if step in allowed_steps]
+        steps = []
+        for source in raw.get('steps', []):
+            operation = source if isinstance(source, str) else source.get('operation')
+            parameters = {} if isinstance(source, str) else source.get('parameters', {})
+            if operation in allowed_steps and isinstance(parameters, dict):
+                steps.append({'operation': operation, 'parameters': parameters})
         if not steps:
             continue
         exception = raw.get('exception')
@@ -242,7 +247,7 @@ def _normalize_workflow_plan(workflow_name, value):
             'exception': exception,
         })
     if not variants:
-        variants = [{'name': f'{workflow_name}_standard', 'description': f'Standard {workflow_name.replace("_", " ")} workflow.', 'weight': 1.0, 'cadence': 'monthly', 'steps': list(config['steps']), 'exception': None}]
+        variants = [{'name': f'{workflow_name}_standard', 'description': f'Standard {workflow_name.replace("_", " ")} workflow.', 'weight': 1.0, 'cadence': 'monthly', 'steps': [{'operation': step, 'parameters': {}} for step in config['steps']], 'exception': None}]
     total = sum(variant['weight'] for variant in variants)
     for variant in variants:
         variant['weight'] = round((variant['weight'] / total) if total else (1 / len(variants)), 6)
@@ -337,14 +342,18 @@ def _generate_records(world_parameters, state_dir, schema_path):
         return workflow(workflow_name, index).get('name', f'{workflow_name}_standard')
 
     def matches(flow, *terms):
-        values = set(flow.get('steps', []))
+        values = {
+            step if isinstance(step, str) else step.get('operation')
+            for step in flow.get('steps', [])
+        }
         values.add(flow.get('exception'))
         return any(term in values for term in terms)
 
-    def trace(workflow_name, flow, instance_key, when, source_table, source_id, amount_cents=0, effects=None, upstream_instance_id=None):
+    def trace(workflow_name, flow, instance_key, when, source_table, source_id, amount_cents=0, effects=None, upstream_instance_id=None, timeline=None):
         instance_id = len(workflow_instances) + 1
         steps = flow.get('steps', [])
         effects = effects or []
+        timeline = timeline or []
         workflow_instances.append({
             'id': instance_id,
             'instance_key': instance_key,
@@ -361,18 +370,28 @@ def _generate_records(world_parameters, state_dir, schema_path):
             'amount_cents': amount_cents,
             'upstream_instance_id': upstream_instance_id,
         })
-        for sequence, step in enumerate(steps, 1):
+        last_date = when
+        for sequence, step_spec in enumerate(steps, 1):
+            step = step_spec if isinstance(step_spec, str) else step_spec.get('operation')
+            parameters = {} if isinstance(step_spec, str) else step_spec.get('parameters', {})
             effect = effects[min(sequence - 1, len(effects) - 1)] if effects else {}
+            event = timeline[min(sequence - 1, len(timeline) - 1)] if timeline else {}
+            step_date = event.get('date', effect.get('date', last_date))
+            if isinstance(step_date, str):
+                step_date = date.fromisoformat(step_date)
+            step_date = max(last_date, step_date)
+            last_date = step_date
             step_executions.append({
                 'id': len(step_executions) + 1,
                 'workflow_instance_id': instance_id,
                 'sequence': sequence,
                 'step': step,
                 'status': effect.get('status', 'completed'),
-                'date': when.isoformat(),
+                'date': step_date.isoformat(),
                 'affected_table': effect.get('table', source_table if sequence == len(steps) else None),
                 'record_id': effect.get('id', source_id if sequence == len(steps) else None),
                 'operation': effect.get('operation', 'update' if effect else 'observe'),
+                'parameters': json.dumps(parameters, sort_keys=True),
                 'before_summary': json.dumps(effect.get('before')) if effect.get('before') is not None else None,
                 'after_summary': json.dumps(effect.get('after')) if effect.get('after') is not None else None,
             })
@@ -459,8 +478,10 @@ def _generate_records(world_parameters, state_dir, schema_path):
             deposit = add('deposits', deposit_date=when.isoformat(), bank_account_id=bank['id'], total=money(amount_cents), memo=payment['payment_number'], subsidiary_id=1, status='deposited')
             payment['deposit_id'] = deposit['id']
             add('payment_applications', payment_id=payment['id'], invoice_id=invoice['id'], amount=money(amount_cents))
-            invoice['amount_paid'], invoice['amount_due'] = (money(amount_cents), round(invoice['total'] - money(amount_cents), 2))
+            invoice['amount_paid'] = round(invoice.get('amount_paid', 0) + money(amount_cents), 2)
+            invoice['amount_due'] = round(invoice['total'] - invoice['amount_paid'], 2)
             cash_change += amount_cents
+            return payment, deposit
     def lead_to_cash():
         nonlocal cash_change, inventory
         tax_bps = int(knowledge['accounting_policies'].get('tax_rate_basis_points', 825))
@@ -487,16 +508,56 @@ def _generate_records(world_parameters, state_dir, schema_path):
             add('invoice_lines', invoice_id=invoice['id'], line_number=1, item_id=item['id'], description=item['name'], quantity=quantity, units=offering['unit'], rate=money(offering['price_cents']), amount=money(subtotal), tax_code_id=1, tax_rate=tax_bps / 100, gross_amount=money(total), department_id=1, class_id=1, location_id=1, sales_order_line_id=line['id'])
             entry = journal(invoice_date, f"Invoice {invoice['invoice_number']}", [(accounts['ar']['id'], total, 0, {'invoice_id': invoice['id'], 'customer_id': customer['id']}), (accounts['revenue']['id'], 0, subtotal, {'invoice_id': invoice['id'], 'customer_id': customer['id']}), (accounts['sales_tax']['id'], 0, tax, {'invoice_id': invoice['id'], 'customer_id': customer['id']})], 'invoice', invoice['id'])
             invoice['journal_entry_id'] = entry['id']
-            paid = total // 2 if matches(flow, 'partial_payment', 'payment_failure') or rng.random() < world_parameters.exception_rate else total
-            receive_payment(invoice, customer['id'], clamp(invoice_date + timedelta(days=rng.randint(3, 20))), paid)
+            payment_dates, payment_records = [], []
+            payment_steps = sum(
+                (step if isinstance(step, str) else step.get('operation')) == 'receive_payment'
+                for step in flow.get('steps', [])
+            )
+            if flow.get('exception') == 'payment_failure':
+                paid = 0
+            elif payment_steps > 1:
+                first = total // payment_steps
+                installments = [first] * (payment_steps - 1) + [total - first * (payment_steps - 1)]
+                prior_date = invoice_date
+                for installment in installments:
+                    prior_date = clamp(prior_date + timedelta(days=rng.randint(5, 15)))
+                    result = receive_payment(invoice, customer['id'], prior_date, installment)
+                    if result:
+                        payment_records.append(result)
+                        payment_dates.append(prior_date)
+                paid = total
+            else:
+                paid = total // 2 if flow.get('exception') == 'partial_payment' else total
+                payment_date = clamp(invoice_date + timedelta(days=rng.randint(3, 20)))
+                result = receive_payment(invoice, customer['id'], payment_date, paid)
+                if result:
+                    payment_records.append(result)
+                    payment_dates.append(payment_date)
             customer_rows[customer['id']]['balance'] += money(total - paid)
             events.append({'id': f'sale:{index + 1}', 'type': 'sale', 'date': order_date.isoformat(), 'source_table': 'sales_orders', 'source_id': order['id'], 'amount_cents': total, 'recipe': flow_name, 'cadence': flow.get('cadence'), 'steps': flow.get('steps', []), 'exception': flow.get('exception')})
-            trace('lead_to_cash', flow, f'sale:{index + 1}', order_date, 'sales_orders', order['id'], total, [
-                {'table': 'sales_orders', 'id': order['id'], 'operation': 'insert', 'after': {'status': order['status'], 'total': order['total']}},
-                {'table': 'item_fulfillments', 'id': index + 1, 'operation': 'insert', 'after': {'status': 'shipped'}},
-                {'table': 'invoices', 'id': invoice['id'], 'operation': 'insert', 'after': {'total': invoice['total'], 'amount_due': invoice['amount_due']}},
-                {'table': 'payments', 'id': ids['payments'], 'operation': 'insert', 'after': {'amount_cents': paid}},
-            ])
+            timeline, effects, payment_index = [], [], 0
+            for step_spec in flow.get('steps', []):
+                operation = step_spec if isinstance(step_spec, str) else step_spec.get('operation')
+                if operation == 'create_estimate':
+                    step_date, effect = order_date, {'table': 'estimates', 'id': estimate['id'], 'operation': 'insert'}
+                elif operation in ('create_sales_order', 'approve_order'):
+                    step_date, effect = order_date, {'table': 'sales_orders', 'id': order['id'], 'operation': 'insert' if operation == 'create_sales_order' else 'update'}
+                elif operation == 'fulfill_order':
+                    step_date, effect = fulfillment_date, {'table': 'item_fulfillments', 'id': index + 1, 'operation': 'insert'}
+                elif operation == 'issue_invoice':
+                    step_date, effect = invoice_date, {'table': 'invoices', 'id': invoice['id'], 'operation': 'insert'}
+                elif operation in ('receive_payment', 'make_deposit') and payment_records:
+                    pair = payment_records[min(payment_index, len(payment_records) - 1)]
+                    step_date = payment_dates[min(payment_index, len(payment_dates) - 1)]
+                    record = pair[0] if operation == 'receive_payment' else pair[1]
+                    effect = {'table': 'payments' if operation == 'receive_payment' else 'deposits', 'id': record['id'], 'operation': 'insert'}
+                    if operation == 'make_deposit':
+                        payment_index += 1
+                else:
+                    step_date, effect = invoice_date, {'status': 'completed'}
+                timeline.append({'date': step_date})
+                effects.append(effect)
+            trace('lead_to_cash', flow, f'sale:{index + 1}', order_date, 'sales_orders', order['id'], total, effects, timeline=timeline)
     def procure_to_pay():
         nonlocal cash_change
         purchase_count = max(24, world_parameters.num_sales_orders // 4)
@@ -761,6 +822,27 @@ def workflow_effects(db, _):
         GROUP BY wi.id HAVING COUNT(ws.id)=0
     ''')
 
+@verifier('workflows')
+def workflow_dates(db, _):
+    return violations(db, '''
+        SELECT current.id FROM workflow_step_executions current
+        JOIN workflow_step_executions prior
+          ON prior.workflow_instance_id=current.workflow_instance_id
+         AND prior.sequence=current.sequence-1
+        WHERE current.date < prior.date
+    ''')
+
+@verifier('workflows')
+def repeated_payments_are_distinct(db, _):
+    return violations(db, '''
+        SELECT workflow_instance_id
+        FROM workflow_step_executions
+        WHERE step='receive_payment'
+        GROUP BY workflow_instance_id
+        HAVING COUNT(*)>1
+           AND COUNT(DISTINCT record_id)<COUNT(*)
+    ''')
+
 def run_all(database, knowledge_base):
     with sqlite3.connect(database) as db:
         results = []
@@ -825,6 +907,7 @@ def _compile(output_path, state_dir, schema_path, world_parameters):
             affected_table TEXT,
             record_id INTEGER,
             operation TEXT NOT NULL DEFAULT 'observe',
+            parameters TEXT NOT NULL DEFAULT '{}',
             before_summary TEXT,
             after_summary TEXT,
             FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id)
