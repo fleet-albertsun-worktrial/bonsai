@@ -7,6 +7,18 @@ Requirements:
 - Return JSON only.
 - Return exactly {{ thread_plan.message_count }} messages in chronological order.
 - Use only the exact participant email addresses supplied in the plan.
+- The first message must follow communication direction {{ thread_plan.communication_direction }}:
+  sender type {{ thread_plan.sender_entity_type }} to recipient type(s)
+  {{ thread_plan.recipient_entity_types | join(", ") }}.
+- Sender role is {{ thread_plan.sender_role or "external contact" }} and sender
+  department is {{ thread_plan.sender_department or "external" }}. Relationship:
+  {{ thread_plan.relationship }}.
+- Employee-to-customer communication must be polished and omit internal-only
+  details. Customer-to-employee messages should ask, confirm, dispute, or supply
+  information naturally.
+- Employee-to-vendor and vendor-to-employee communication should use appropriate
+  purchasing, fulfillment, billing, or payment language. Employee-to-employee
+  communication may use concise internal terminology.
 - Each message must contain sender, to (an array), cc (an array), subject, text, and date.
 - Preserve the workflow facts, dates, status, record identifiers, and amounts. Do not invent financial facts.
 - Make replies sound natural, concise, and distinct. Do not include signatures; they are added later.

@@ -1,9 +1,24 @@
 import argparse
+import base64
 import html
 import json
 import sqlite3
 import sys
 from pathlib import Path
+
+EMAIL_INBOX = None
+
+
+def _email_inbox_component():
+    global EMAIL_INBOX
+    if EMAIL_INBOX is None:
+        import streamlit.components.v1 as components
+
+        EMAIL_INBOX = components.declare_component(
+            "email_inbox",
+            path=str(Path(__file__).parent / "components" / "email_inbox"),
+        )
+    return EMAIL_INBOX
 
 
 def _args():
@@ -304,7 +319,42 @@ def _app():
             st.table(trace_rows)
 
     if page_name == "Emails":
-        st.title("Emails")
+        st.markdown(
+            """<style>
+            .email-shell [data-testid="stVerticalBlock"] { gap: .55rem; }
+            .email-title {font-size:1.35rem;font-weight:650;margin:0 0 .15rem}
+            .email-subtle {color:#667085;font-size:.78rem}
+            .message-card {border-bottom:1px solid #e4e7ec;padding:16px 4px;
+                margin:0;background:#fff}
+            .message-subject {font-size:1rem;font-weight:500;margin:0 0 12px}
+            .message-head {display:flex;justify-content:space-between;gap:12px;
+                margin-bottom:1px;font-size:.86rem;align-items:center}
+            .sender-wrap {display:flex;align-items:center;gap:10px}
+            .sender-avatar {width:32px;height:32px;border-radius:50%;
+                display:inline-flex;align-items:center;justify-content:center;
+                color:#fff;background:#5f6368;font-size:.78rem;font-weight:600}
+            .message-date {color:#5f6368;font-size:.74rem;white-space:nowrap}
+            .message-address {color:#5f6368;font-size:.72rem;margin:0 0 14px 42px}
+            .message-body {margin-left:42px;color:#202124;line-height:1.55}
+            .message-logo {display:block;max-width:180px;max-height:100px;
+                object-fit:contain;margin:14px 0 0 42px}
+            .property-grid {border:1px solid #e4e7ec;border-radius:8px;
+                overflow:hidden;margin-bottom:12px}
+            .property-row {display:grid;grid-template-columns:38% 62%;
+                gap:8px;padding:7px 10px;border-bottom:1px solid #f0f1f3;
+                font-size:.76rem}
+            .property-row:last-child {border-bottom:0}
+            .property-label {color:#667085}
+            .property-value {color:#101828;overflow-wrap:anywhere}
+            </style><div class="email-shell"></div>""",
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="email-title">Email archive</div>',
+                    unsafe_allow_html=True)
+        st.markdown(
+            '<div class="email-subtle">Generated workflow communications</div>',
+            unsafe_allow_html=True,
+        )
         try:
             emails = _load_emails(path)
         except (OSError, json.JSONDecodeError) as error:
@@ -316,16 +366,29 @@ def _app():
                 f"`uv run generate_emails.py {path} --thread-limit 100`."
             )
             return
-        query = st.text_input(
-            "Search emails", placeholder="Subject, sender, workflow, or content"
+        search, domain_filter, workflow_filter = st.columns([2.2, 1, 1.2])
+        query = search.text_input(
+            "Search", placeholder="Search subject, sender, or content",
+            label_visibility="collapsed",
         ).strip().lower()
+        domains = sorted({email.get("domain", "") for email in emails})
+        domain = domain_filter.selectbox(
+            "Domain", ["All domains", *domains], label_visibility="collapsed"
+        )
+        workflows = sorted({email.get("workflow", "") for email in emails})
+        workflow = workflow_filter.selectbox(
+            "Workflow", ["All workflows", *workflows],
+            label_visibility="collapsed",
+        )
         filtered = [
             email for email in emails
-            if not query or query in " ".join((
-                email.get("subject", ""), email.get("sender", ""),
-                email.get("sender_name", ""), email.get("workflow", ""),
-                email.get("body", ""),
-            )).lower()
+            if (domain == "All domains" or email.get("domain") == domain)
+            and (workflow == "All workflows" or email.get("workflow") == workflow)
+            and (not query or query in " ".join((
+                    email.get("subject", ""), email.get("sender", ""),
+                    email.get("sender_name", ""), email.get("workflow", ""),
+                    email.get("body", ""),
+                )).lower())
         ]
         if not filtered:
             st.warning("No emails match that search.")
@@ -336,86 +399,153 @@ def _app():
             threads.setdefault(email["thread_id"], []).append(email)
         for messages in threads.values():
             messages.sort(key=lambda item: item.get("sequence", 0))
-        labels = {
-            thread_id: (
-                f"{messages[0].get('subject', '(no subject)')} · "
-                f"{len(messages)} message{'s' if len(messages) != 1 else ''} · "
-                f"{messages[-1].get('date', '')}"
-            )
-            for thread_id, messages in threads.items()
-        }
+        if st.session_state.get("selected_email_thread") not in threads:
+            st.session_state.selected_email_thread = next(iter(threads))
+        selected_id = st.session_state.selected_email_thread
         with left:
-            st.subheader(f"Threads ({len(threads):,})")
-            selected_id = st.radio(
-                "Email thread", list(labels), format_func=labels.get,
-                label_visibility="collapsed",
+            st.markdown(
+                f'<div class="email-title">Inbox '
+                f'<span class="email-subtle">{len(threads)}</span></div>',
+                unsafe_allow_html=True,
             )
+            component_threads = []
+            for thread_id, thread_messages in threads.items():
+                first, last = thread_messages[0], thread_messages[-1]
+                component_threads.append({
+                    "id": thread_id,
+                    "sender": first.get("sender_name") or first.get("sender", ""),
+                    "date": str(last.get("date", "")),
+                    "subject": first.get("subject", "(no subject)"),
+                    "preview": " ".join(first.get("text", "").split())[:90],
+                    "count": len(thread_messages),
+                })
+            clicked_id = _email_inbox_component()(
+                threads=component_threads,
+                selected=selected_id,
+                default=selected_id,
+                key="email-inbox-component",
+            )
+            if clicked_id in threads and clicked_id != selected_id:
+                st.session_state.selected_email_thread = clicked_id
+                selected_id = clicked_id
+                st.rerun()
         messages = threads[selected_id]
         selected = messages[-1]
         with middle:
-            st.subheader(messages[0].get("subject", "(no subject)"))
+            subject = html.escape(messages[0].get("subject", "(no subject)"))
+            participants = sorted({
+                message.get("sender_name") or message.get("sender", "")
+                for message in messages
+            })
+            st.markdown(
+                f'<div class="email-title">{subject}</div>'
+                f'<div class="email-subtle">{len(messages)} messages · '
+                f'{html.escape(", ".join(participants))}</div>',
+                unsafe_allow_html=True,
+            )
             for index, message in enumerate(messages):
-                if index:
-                    st.divider()
-                st.markdown(
-                    f"**{message.get('sender_name', '')} "
-                    f"<{message.get('sender', '')}>**"
-                )
-                st.caption(
-                    f"To: {', '.join(message.get('to', []))} · "
-                    f"{message.get('date', '')}"
-                )
-                if message.get("cc"):
-                    st.caption(f"Cc: {', '.join(message['cc'])}")
                 body = message.get("body") or message.get("text", "")
+                message_subject = html.escape(
+                    message.get("subject", "(no subject)")
+                )
+                sender_name = html.escape(message.get("sender_name", ""))
+                sender_email = html.escape(message.get("sender", ""))
+                sent_date = html.escape(str(message.get("date", "")))
+                recipients = html.escape(", ".join(message.get("to", [])))
+                initials = "".join(
+                    part[:1] for part in message.get("sender_name", "").split()[:2]
+                ).upper() or "?"
+                logo_html = ""
+                logo_path = message.get("logo_path")
+                if logo_path:
+                    logo = path / "email_gen" / logo_path
+                    if logo.is_file():
+                        encoded_logo = base64.b64encode(logo.read_bytes()).decode()
+                        logo_html = (
+                            f'<img class="message-logo" '
+                            f'src="data:image/png;base64,{encoded_logo}" '
+                            f'alt="{html.escape(message.get("sender_name", ""))}">'
+                        )
                 if message.get("font_family") and message.get("font_size_px"):
                     font_family = html.escape(
                         str(message["font_family"]), quote=True
                     )
                     font_size = int(message["font_size_px"])
                     st.markdown(
-                        f'<div style="font-family:{font_family};'
+                        '<div class="message-card">'
+                        f'<div class="message-subject">{message_subject}</div>'
+                        '<div class="message-head">'
+                        '<div class="sender-wrap">'
+                        f'<span class="sender-avatar">{initials}</span>'
+                        f'<span><strong>{sender_name}</strong> &lt;{sender_email}&gt;'
+                        '</span></div>'
+                        f'<span class="message-date">{sent_date}</span>'
+                        '</div>'
+                        f'<div class="message-address">to {recipients}</div>'
+                        f'<div class="message-body" style="font-family:{font_family};'
                         f'font-size:{font_size}px;white-space:pre-wrap">'
-                        f"{html.escape(body)}</div>",
+                        f"{html.escape(body)}</div>{logo_html}</div>",
                         unsafe_allow_html=True,
                     )
                 else:
-                    st.text(body)
-                logo_path = message.get("logo_path")
-                if logo_path:
-                    logo = path / "email_gen" / logo_path
-                    if logo.is_file():
-                        st.image(str(logo), width=180)
+                    st.markdown(
+                        '<div class="message-card">'
+                        f'<div class="message-subject">{message_subject}</div>'
+                        '<div class="message-head"><div class="sender-wrap">'
+                        f'<span class="sender-avatar">{initials}</span>'
+                        f'<span><strong>{sender_name}</strong> &lt;{sender_email}&gt;'
+                        '</span></div>'
+                        f'<span class="message-date">{sent_date}</span></div>'
+                        f'<div class="message-address">to {recipients}</div>'
+                        f'<div class="message-body" style="white-space:pre-wrap">'
+                        f'{html.escape(body)}</div>{logo_html}</div>',
+                        unsafe_allow_html=True,
+                    )
         with right:
-            st.subheader("Thread properties")
-            properties = {
-                "Thread ID": selected.get("thread_id"),
-                "Messages": len(messages),
-                "Participants": ", ".join(sorted({
-                    message.get("sender_name") or message.get("sender", "")
-                    for message in messages
-                })),
-                "Generation type": selected.get("generation_type"),
-                "Workflow": selected.get("workflow"),
-                "Variant": selected.get("variant"),
-                "Domain": selected.get("domain"),
-                "Exception": selected.get("exception"),
-                "Workflow instance": selected.get("workflow_instance_id"),
-                "Source": (
-                    f"{selected.get('source_table')} #{selected.get('source_id')}"
-                ),
-                "Topic": selected.get("topic") or "Direct",
-                "Tone": selected.get("tone"),
-                "MBTI": selected.get("mbti"),
-                "Font": selected.get("font_variant"),
-                "Font size": (
-                    f"{selected.get('font_size_px')}px"
-                    if selected.get("font_size_px") else None
-                ),
+            st.markdown('<div class="email-title">Details</div>',
+                        unsafe_allow_html=True)
+            sections = {
+                "Thread": {
+                    "ID": selected.get("thread_id"),
+                    "Messages": len(messages),
+                    "Participants": ", ".join(participants),
+                },
+                "Workflow": {
+                    "Domain": selected.get("domain"),
+                    "Workflow": selected.get("workflow"),
+                    "Variant": selected.get("variant"),
+                    "Exception": selected.get("exception") or "None",
+                    "Instance": selected.get("workflow_instance_id"),
+                    "Source": (
+                        f"{selected.get('source_table')} "
+                        f"#{selected.get('source_id')}"
+                    ),
+                },
+                "Generation": {
+                    "Type": selected.get("generation_type"),
+                    "Topic": selected.get("topic") or "Direct",
+                    "Tone": selected.get("tone"),
+                    "Personality": selected.get("mbti"),
+                    "Font": selected.get("font_variant"),
+                    "Size": (
+                        f"{selected.get('font_size_px')}px"
+                        if selected.get("font_size_px") else None
+                    ),
+                },
             }
-            for label, value in properties.items():
-                st.markdown(f"**{label}**")
-                st.write(value if value not in (None, "") else "—")
+            for heading, properties in sections.items():
+                st.markdown(f"**{heading}**")
+                rows = "".join(
+                    '<div class="property-row">'
+                    f'<div class="property-label">{html.escape(str(label))}</div>'
+                    f'<div class="property-value">{html.escape(str(value or "—"))}</div>'
+                    '</div>'
+                    for label, value in properties.items()
+                )
+                st.markdown(
+                    f'<div class="property-grid">{rows}</div>',
+                    unsafe_allow_html=True,
+                )
             with st.expander("Workflow evidence"):
                 st.json(selected.get("steps", []))
             mbox_path = selected.get("mbox_path")

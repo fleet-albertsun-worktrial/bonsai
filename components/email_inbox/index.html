@@ -1,0 +1,99 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #202124; }
+    #inbox { height: 68vh; min-height: 420px; overflow-y: auto; border: 1px solid #e4e7ec;
+      border-radius: 8px; background: #fff; }
+    .row { width: 100%; display: block; border: 0; border-bottom: 1px solid #edf0f2;
+      background: #fff; color: inherit; text-align: left; padding: 10px 12px; cursor: pointer; }
+    .row:last-child { border-bottom: 0; }
+    .row:hover, .row:focus-visible { background: #f2f6fc; outline: none; }
+    .row.selected { background: #d3e3fd; }
+    .meta { display: flex; justify-content: space-between; gap: 8px; font-size: 11px;
+      margin-bottom: 3px; }
+    .sender { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .date { color: #5f6368; white-space: nowrap; }
+    .subject { font-size: 12.5px; font-weight: 500; white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis; }
+    .preview { font-size: 11.5px; color: #5f6368; white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis; margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <div id="inbox" role="listbox" aria-label="Email threads"></div>
+  <script>
+    const Streamlit = {
+      RENDER_EVENT: "streamlit:render",
+      events: {
+        addEventListener: (name, callback) => {
+          window.addEventListener("message", (event) => {
+            if (event.data.type === name) {
+              callback({detail: event.data});
+            }
+          });
+        }
+      },
+      setComponentReady: () => {
+        window.parent.postMessage({isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1}, "*");
+      },
+      setComponentValue: (value) => {
+        window.parent.postMessage({isStreamlitMessage: true, type: "streamlit:setComponentValue", value, dataType: "json"}, "*");
+      },
+      setFrameHeight: (height) => {
+        window.parent.postMessage({isStreamlitMessage: true, type: "streamlit:setFrameHeight", height}, "*");
+      }
+    };
+    let args = {};
+    let selected = null;
+
+    function node(tag, className, text) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text !== undefined) element.textContent = String(text);
+      return element;
+    }
+
+    function selectThread(id, emit) {
+      selected = id;
+      document.querySelectorAll(".row").forEach((row) => {
+        const active = row.dataset.id === id;
+        row.classList.toggle("selected", active);
+        row.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      if (emit) Streamlit.setComponentValue(id);
+    }
+
+    function render(event) {
+      args = event.detail.args || {};
+      selected = args.selected || selected;
+      const inbox = document.getElementById("inbox");
+      const scrollTop = inbox.scrollTop;
+      inbox.replaceChildren();
+      (args.threads || []).forEach((thread) => {
+        const row = node("button", "row");
+        row.type = "button";
+        row.dataset.id = thread.id;
+        row.setAttribute("role", "option");
+        const meta = node("div", "meta");
+        meta.append(node("span", "sender", thread.sender));
+        meta.append(node("span", "date", thread.date));
+        row.append(meta);
+        row.append(node("div", "subject", thread.subject));
+        row.append(node("div", "preview", `${thread.preview} · ${thread.count} messages`));
+        row.addEventListener("click", () => selectThread(thread.id, true));
+        inbox.append(row);
+      });
+      selectThread(selected, false);
+      inbox.scrollTop = scrollTop;
+      Streamlit.setFrameHeight(Math.max(420, Math.min(window.innerHeight * .68, 760)));
+    }
+
+    Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, render);
+    Streamlit.setComponentReady();
+    Streamlit.setFrameHeight(620);
+  </script>
+</body>
+</html>

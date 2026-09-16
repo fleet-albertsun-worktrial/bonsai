@@ -10,7 +10,9 @@ import base64
 import html
 import json
 import mailbox
+import math
 import random
+import re
 import sqlite3
 import time
 import zipfile
@@ -186,6 +188,77 @@ def _participants(db, source_table, source_id, people, index):
     return [first, second]
 
 
+def _communication_metadata(participants, reverse):
+    sender, recipient = (
+        (participants[1], participants[0]) if reverse else participants
+    )
+    direction = f"{sender['entity_type']}_to_{recipient['entity_type']}"
+    internal = sender if sender["entity_type"] == "employee" else recipient
+    relationship = (
+        "internal" if sender["entity_type"] == recipient["entity_type"] == "employee"
+        else f"external_{recipient['entity_type'] if sender['entity_type'] == 'employee' else sender['entity_type']}"
+    )
+    return {
+        "communication_direction": direction,
+        "sender_entity_type": sender["entity_type"],
+        "recipient_entity_types": [recipient["entity_type"]],
+        "sender_role": sender.get("title", ""),
+        "sender_department": sender.get("department", ""),
+        "relationship": relationship,
+        "sender_group": f"{direction}:{internal.get('department') or internal.get('title') or 'external'}",
+    }
+
+
+def _stratified_rows(db, people, limit, seed):
+    rows = db.execute(
+        """SELECT id, instance_key, domain, workflow, variant, description,
+                  exception, status, date, source_table, source_id, amount_cents
+           FROM workflow_instances
+           WHERE source_table IS NOT NULL AND source_id IS NOT NULL"""
+    ).fetchall()
+    rng = random.Random(seed)
+    strata = {}
+    for row in rows:
+        participants = _participants(db, row[9], row[10], people, row[0] - 1)
+        reverse = bool(rng.getrandbits(1)) if participants[1]["entity_type"] != "employee" else False
+        communication = _communication_metadata(participants, reverse)
+        month = int(row[8][5:7])
+        quarter = f"{row[8][:4]}-Q{(month - 1) // 3 + 1}"
+        key = (row[3], row[4], quarter, communication["sender_group"])
+        strata.setdefault(key, []).append((row, participants, communication, quarter))
+    for values in strata.values():
+        rng.shuffle(values)
+    quota = min(limit or len(rows), len(rows))
+    selected = []
+    # Guarantee one representative from every populated stratum when possible.
+    keys = list(strata)
+    rng.shuffle(keys)
+    keys.sort(key=lambda key: len(strata[key]))
+    if len(keys) > quota:
+        by_workflow = {}
+        for key in keys:
+            by_workflow.setdefault(key[0], []).append(key)
+        keys = []
+        while len(keys) < quota and any(by_workflow.values()):
+            for workflow in sorted(by_workflow):
+                if by_workflow[workflow] and len(keys) < quota:
+                    keys.append(by_workflow[workflow].pop(0))
+    for key in keys[:quota]:
+        selected.append(strata[key].pop())
+    remaining = quota - len(selected)
+    # Square-root allocation prevents the largest workflows from dominating.
+    while remaining:
+        available = [key for key, values in strata.items() if values]
+        if not available:
+            break
+        weights = [math.sqrt(len(strata[key])) for key in available]
+        key = rng.choices(available, weights=weights, k=1)[0]
+        selected.append(strata[key].pop())
+        remaining -= 1
+    rng.shuffle(selected)
+    return selected
+
+
 # CREATE THREAD WORKLOADS
 def create_thread_workload(results_folder_path, thread_limit=None, seed=42):
     # create a thread plan
@@ -194,16 +267,9 @@ def create_thread_workload(results_folder_path, thread_limit=None, seed=42):
     rng = random.Random(seed)
     with _connect(results_folder_path) as db:
         people = _people(db)
-        rows = db.execute(
-            """SELECT id, instance_key, domain, workflow, variant, description,
-                      exception, status, date, source_table, source_id, amount_cents
-               FROM workflow_instances
-               WHERE source_table IS NOT NULL AND source_id IS NOT NULL
-               ORDER BY id LIMIT ?""",
-            (int(thread_limit) if thread_limit else -1,),
-        ).fetchall()
+        selected = _stratified_rows(db, people, thread_limit, seed)
         workloads = []
-        for index, row in enumerate(rows):
+        for index, (row, participants, communication, quarter) in enumerate(selected):
             steps = [
                 dict(zip(
                     ("sequence", "step", "status", "date", "affected_table",
@@ -218,7 +284,6 @@ def create_thread_workload(results_folder_path, thread_limit=None, seed=42):
                     (row[0],),
                 )
             ]
-            participants = _participants(db, row[9], row[10], people, index)
             category, topic = _topic(rng)
             workloads.append({
                 "thread_id": f"thread-{row[0]:08d}",
@@ -228,6 +293,7 @@ def create_thread_workload(results_folder_path, thread_limit=None, seed=42):
                 "date": row[8], "source_table": row[9], "source_id": row[10],
                 "amount_cents": row[11], "steps": steps,
                 "participants": participants, "topic_category": category,
+                **communication, "quarter": quarter,
                 "topic": topic, "tone": rng.choice(TONE), "mbti": rng.choice(MBTI),
                 "message_count": rng.choices([1, 2, 3, 4], [0.12, 0.48, 0.3, 0.1])[0],
                 "evidence": (
@@ -275,6 +341,10 @@ def _validate_thread(value, plan):
     if len(emails) > 6:
         raise ValueError("thread exceeds six messages")
     allowed = {person["email"] for person in plan["participants"]}
+    expected_sender_type = plan["sender_entity_type"]
+    sender_types = {
+        person["email"]: person["entity_type"] for person in plan["participants"]
+    }
     normalized = []
     for index, email in enumerate(emails, 1):
         recipients = email.get("to")
@@ -286,6 +356,8 @@ def _validate_thread(value, plan):
             or any(item not in allowed for item in recipients)
         ):
             raise ValueError("message uses a participant absent from the world")
+        if index == 1 and sender_types[email["sender"]] != expected_sender_type:
+            raise ValueError("first sender does not match communication direction")
         if not email.get("subject") or not email.get("text"):
             raise ValueError("message requires subject and text")
         normalized.append({
@@ -344,7 +416,7 @@ async def _generate_all(workload, model, concurrency):
     return results, usage
 
 
-def generate_emails(workload, model=None, concurrency=10):
+def generate_emails(workload, model=None, concurrency=25):
     # concurrently in large batches (50? 100?) and generate using openai 5.6 luna
     # show tmux progress
     # outputs a list of email json objects
@@ -407,6 +479,10 @@ def _signature(characteristic):
         f"{characteristic['quote']} — {characteristic['quote_author']}"
     )
     return SIGNATURE_TEMPLATES[characteristic["signature_template"]].format(**values)
+
+
+def _base_subject(subject):
+    return re.sub(r"^(?:\s*re\s*:\s*)+", "", subject, flags=re.IGNORECASE).strip()
 
 
 def _slug(value):
@@ -490,9 +566,13 @@ def render(
         plan, messages = thread["plan"], thread["emails"]
         references, previous = [], None
         thread_messages = []
+        base_subject = _base_subject(messages[0]["subject"]) or "Business update"
         for item in messages:
             characteristic = characteristics[item["sender"]]
             message_id = f"{plan['thread_id']}-{item['sequence']:02d}@bonsai.local"
+            subject = (
+                base_subject if item["sequence"] == 1 else f"Re: {base_subject}"
+            )
             body = item["text"].rstrip() + "\n\n" + _signature(characteristic)
             message = EmailMessage(policy=email_policy)
             message["Message-ID"] = f"<{message_id}>"
@@ -503,7 +583,7 @@ def render(
             message["To"] = ", ".join(item["to"])
             if item["cc"]:
                 message["Cc"] = ", ".join(item["cc"])
-            message["Subject"] = item["subject"]
+            message["Subject"] = subject
             if previous:
                 message["In-Reply-To"] = f"<{previous}>"
                 message["References"] = " ".join(f"<{ref}>" for ref in references)
@@ -535,7 +615,8 @@ def render(
             expected_paths.add(eml_path)
             thread_messages.append(message)
             flattened.append({
-                **item, "message_id": message_id, "thread_id": plan["thread_id"],
+                **item, "subject": subject, "message_id": message_id,
+                "thread_id": plan["thread_id"],
                 "body": body, "eml_path": str(eml_path.relative_to(output)),
                 "logo_path": (
                     str(logo_path.relative_to(output)) if logo_path else None
@@ -552,6 +633,14 @@ def render(
                 "source_table": plan["source_table"], "source_id": plan["source_id"],
                 "topic_category": plan["topic_category"], "topic": plan["topic"],
                 "tone": plan["tone"], "mbti": plan["mbti"], "steps": plan["steps"],
+                "quarter": plan["quarter"],
+                "sender_group": plan["sender_group"],
+                "communication_direction": plan["communication_direction"],
+                "sender_entity_type": plan["sender_entity_type"],
+                "recipient_entity_types": plan["recipient_entity_types"],
+                "sender_role": plan["sender_role"],
+                "sender_department": plan["sender_department"],
+                "relationship": plan["relationship"],
                 "generation_type": "workflow_evidence", "in_reply_to": previous,
             })
             previous = message_id
@@ -627,7 +716,7 @@ def _args():
     )
     parser.add_argument("--model")
     parser.add_argument("--thread-limit", type=int, default=100)
-    parser.add_argument("--concurrency", type=int, default=10)
+    parser.add_argument("--concurrency", type=int, default=25)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--input-price", type=float)
     parser.add_argument("--cached-input-price", type=float)
