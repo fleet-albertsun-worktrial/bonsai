@@ -1,5 +1,5 @@
 # Bonsai 🪴
-bonsai is a system to simulate realistic, complex financial systems for a company. Like how bonsai trees are designed to replicate the detail and veracity of large trees, the bonsai tool attempts to simulate realistic transactional and digital communication data.
+bonsai simulates realistic, complex financial systems for synthetic companies. Like how a bonsai tree recreates the structure and detail of a full-sized tree, Bonsai generates coherent transactional records and digital communications that reflect real business operations.
 
 ## Quick start
 
