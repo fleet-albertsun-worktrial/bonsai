@@ -1,5 +1,5 @@
 # Bonsai 🪴
-bonsai simulates realistic, complex financial systems for synthetic companies. Like how a bonsai tree recreates the structure and detail of a full-sized tree, Bonsai generates coherent transactional records and digital communications that reflect real business operations.
+Bonsai simulates realistic, complex financial systems for synthetic companies. Like how a bonsai tree recreates the structure and detail of a full-sized tree, Bonsai generates coherent transactional records and digital communications that reflect real business operations.
 
 ## Quick start
 
