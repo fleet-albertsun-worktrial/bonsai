@@ -188,6 +188,9 @@ def _extract_knowledge_base(world_parameters, state_dir, schema_path):
     if registry_path.exists():
         return
     knowledge, rng = (_json(knowledge_path), random.Random(world_parameters.random_seed))
+    company_domain = (
+        re.sub(r'[^a-z0-9]+', '', knowledge['company']['name'].lower()) + '.com'
+    )
     fake = Faker()
     fake.seed_instance(world_parameters.random_seed)
     source_departments = knowledge['departments'] or _default_knowledge_base()['departments']
@@ -197,7 +200,7 @@ def _extract_knowledge_base(world_parameters, state_dir, schema_path):
     for index in range(1, world_parameters.num_employees + 1):
         role, department = (roles[(index - 1) % len(roles)], departments[(index - 1) % len(departments)])
         first, last = (fake.first_name(), fake.last_name())
-        employees.append({'id': index, 'employee_id': f'EMP-{index:04d}', 'first_name': first, 'last_name': last, 'email': f'{first}.{last}.{index}@northstar.example'.lower(), 'phone': fake.phone_number(), 'title': role['title'], 'department_id': department['id'], 'hire_date': (world_parameters.start_date - timedelta(days=rng.randint(30, 2500))).isoformat()})
+        employees.append({'id': index, 'employee_id': f'EMP-{index:04d}', 'first_name': first, 'last_name': last, 'email': f'{first}.{last}.{index}@{company_domain}'.lower(), 'phone': fake.phone_number(), 'title': role['title'], 'department_id': department['id'], 'hire_date': (world_parameters.start_date - timedelta(days=rng.randint(30, 2500))).isoformat()})
     segments = knowledge['customer_segments']
     customers = []
     for index in range(1, world_parameters.num_customers + 1):

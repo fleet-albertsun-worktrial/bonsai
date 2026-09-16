@@ -1,0 +1,22 @@
+Create one realistic business email thread grounded only in the supplied plan.
+
+Thread plan:
+{{ thread_plan | tojson }}
+
+Requirements:
+- Return JSON only.
+- Return exactly {{ thread_plan.message_count }} messages in chronological order.
+- Use only the exact participant email addresses supplied in the plan.
+- Each message must contain sender, to (an array), cc (an array), subject, text, and date.
+- Preserve the workflow facts, dates, status, record identifiers, and amounts. Do not invent financial facts.
+- Make replies sound natural, concise, and distinct. Do not include signatures; they are added later.
+- Reflect tone {{ thread_plan.tone }} and personality {{ thread_plan.mbti }}.
+{% if thread_plan.topic %}
+- Briefly and naturally mention {{ thread_plan.topic }} in no more than one message.
+{% else %}
+- Stay directly on the work topic.
+{% endif %}
+- Dates must be ISO dates no earlier than the workflow date.
+
+Return this shape:
+{"emails":[{"sender":"exact address","to":["exact address"],"cc":[],"subject":"...","text":"...","date":"YYYY-MM-DD"}]}

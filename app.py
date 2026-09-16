@@ -38,6 +38,17 @@ def _load(path):
     return statistics, tables
 
 
+def _load_emails(path):
+    email_path = path / "email_gen" / "emails.jsonl"
+    if not email_path.is_file():
+        return []
+    return [
+        json.loads(line)
+        for line in email_path.read_text().splitlines()
+        if line.strip()
+    ]
+
+
 def _coerce(value, declared_type):
     if not value:
         return None
@@ -291,6 +302,115 @@ def _app():
             ]
             st.table(trace_rows)
 
+    if page_name == "Emails":
+        st.title("Emails")
+        try:
+            emails = _load_emails(path)
+        except (OSError, json.JSONDecodeError) as error:
+            st.error(f"Could not load generated emails: {error}")
+            return
+        if not emails:
+            st.info(
+                "No generated emails found. Run "
+                f"`uv run generate_emails.py {path} --thread-limit 100`."
+            )
+            return
+        query = st.text_input(
+            "Search emails", placeholder="Subject, sender, workflow, or content"
+        ).strip().lower()
+        filtered = [
+            email for email in emails
+            if not query or query in " ".join((
+                email.get("subject", ""), email.get("sender", ""),
+                email.get("sender_name", ""), email.get("workflow", ""),
+                email.get("body", ""),
+            )).lower()
+        ]
+        if not filtered:
+            st.warning("No emails match that search.")
+            return
+        left, middle, right = st.columns([0.9, 1.8, 1.15], gap="large")
+        threads = {}
+        for email in filtered:
+            threads.setdefault(email["thread_id"], []).append(email)
+        for messages in threads.values():
+            messages.sort(key=lambda item: item.get("sequence", 0))
+        labels = {
+            thread_id: (
+                f"{messages[0].get('subject', '(no subject)')} · "
+                f"{len(messages)} message{'s' if len(messages) != 1 else ''} · "
+                f"{messages[-1].get('date', '')}"
+            )
+            for thread_id, messages in threads.items()
+        }
+        with left:
+            st.subheader(f"Threads ({len(threads):,})")
+            selected_id = st.radio(
+                "Email thread", list(labels), format_func=labels.get,
+                label_visibility="collapsed",
+            )
+        messages = threads[selected_id]
+        selected = messages[-1]
+        with middle:
+            st.subheader(messages[0].get("subject", "(no subject)"))
+            for index, message in enumerate(messages):
+                if index:
+                    st.divider()
+                st.markdown(
+                    f"**{message.get('sender_name', '')} "
+                    f"<{message.get('sender', '')}>**"
+                )
+                st.caption(
+                    f"To: {', '.join(message.get('to', []))} · "
+                    f"{message.get('date', '')}"
+                )
+                if message.get("cc"):
+                    st.caption(f"Cc: {', '.join(message['cc'])}")
+                st.text(message.get("body") or message.get("text", ""))
+        with right:
+            st.subheader("Thread properties")
+            properties = {
+                "Thread ID": selected.get("thread_id"),
+                "Messages": len(messages),
+                "Participants": ", ".join(sorted({
+                    message.get("sender_name") or message.get("sender", "")
+                    for message in messages
+                })),
+                "Generation type": selected.get("generation_type"),
+                "Workflow": selected.get("workflow"),
+                "Variant": selected.get("variant"),
+                "Domain": selected.get("domain"),
+                "Exception": selected.get("exception"),
+                "Workflow instance": selected.get("workflow_instance_id"),
+                "Source": (
+                    f"{selected.get('source_table')} #{selected.get('source_id')}"
+                ),
+                "Topic": selected.get("topic") or "Direct",
+                "Tone": selected.get("tone"),
+                "MBTI": selected.get("mbti"),
+            }
+            for label, value in properties.items():
+                st.markdown(f"**{label}**")
+                st.write(value if value not in (None, "") else "—")
+            with st.expander("Workflow evidence"):
+                st.json(selected.get("steps", []))
+            for message in messages:
+                eml_path = path / "email_gen" / message["eml_path"]
+                if eml_path.is_file():
+                    st.download_button(
+                        f"Download message {message.get('sequence', '')}",
+                        eml_path.read_bytes(), file_name=eml_path.name,
+                        mime="message/rfc822",
+                        key=f"download-{message['message_id']}",
+                    )
+            archive = path / "email_gen" / "emails.zip"
+            if archive.is_file():
+                st.download_button(
+                    "Download all emails", archive.read_bytes(),
+                    file_name="emails.zip", mime="application/zip",
+                )
+        return
+
     if page_name != "Tables":
         return
 
@@ -358,6 +478,10 @@ def _tables_page():
     _run_page("Tables")
 
 
+def _emails_page():
+    _run_page("Emails")
+
+
 def _navigation():
     import streamlit as st
 
@@ -365,6 +489,7 @@ def _navigation():
         st.Page(_home_page, title="Home", icon=":material/home:", default=True),
         st.Page(_workflows_page, title="Workflows", icon=":material/account_tree:"),
         st.Page(_tables_page, title="Tables", icon=":material/table:"),
+        st.Page(_emails_page, title="Emails", icon=":material/mail:"),
     ])
     navigation.run()
 
