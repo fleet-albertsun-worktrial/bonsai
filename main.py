@@ -24,10 +24,10 @@ TEMPLATES = ROOT / 'prompt_templates'
 JINJA = Environment(
     loader=FileSystemLoader(TEMPLATES), undefined=StrictUndefined, autoescape=False
 )
-PIPELINE_VERSION = '2'
+PIPELINE_VERSION = '3'
 DOMAINS = {'order_to_cash': ('order-to-cash',), 'procure_to_pay': ('procure-to-pay',), 'subscription_lifecycle': ('subscription-lifecycle',), 'revenue_and_journal': ('revenue-recognition', 'journal-entry'), 'expenses_and_assets': ('expense-management', 'fixed-asset-lifecycle'), 'treasury_and_reconciliation': ('bank-reconciliation', 'exchange-rate-management'), 'planning_reporting_close': ('budget-management', 'financial-reporting', 'period-close'), 'consolidation_governance': ('consolidation',)}
 WORKFLOW_OUTPUT = {'workflow_mix': [{'name': '...', 'weight': 0.0, 'cadence': 'daily|weekly|monthly|quarterly|annual', 'steps': ['...'], 'exception': None}]}
-DOMAIN_PROMPTS = {
+WORKFLOW_PLAN_PROMPTS = {
     'order_to_cash': {'prompt': 'Design varied order-to-cash workflows. Cover estimates, approvals, sales orders, partial/full fulfillment, invoices, payments, deposits, returns, credit memos, and plausible exceptions.', 'json_output': WORKFLOW_OUTPUT},
     'procure_to_pay': {'prompt': 'Design varied procure-to-pay workflows. Cover requisitions, RFQs, contracts, purchase orders, receipts, three-way matching, bills, payments, vendor credits/returns, and plausible exceptions.', 'json_output': WORKFLOW_OUTPUT},
     'subscription_lifecycle': {'prompt': 'Design varied subscription-lifecycle workflows. Cover plans, activation, renewals, amendments, suspension, termination, usage, rating, prepaid drawdown, overages, recurring charges, and exceptions.', 'json_output': WORKFLOW_OUTPUT},
@@ -189,8 +189,8 @@ async def _generate_domain_plans(world_parameters, state_dir, schema_path, missi
 
     async def generate_domain(domain):
         async with semaphore:
-            config = DOMAIN_PROMPTS[domain]
-            plan = await _ask_json(client, world_parameters.model, _render('domain.jinja2', domain_prompt=config['prompt'], json_output=json.dumps(config['json_output']), shared_context=shared, schema_context=_schema_context(schema_path), workflow_context=_workflow_context(domain)))
+            config = WORKFLOW_PLAN_PROMPTS[domain]
+            plan = await _ask_json(client, world_parameters.model, _render('workflow_plan.jinja2', domain_prompt=config['prompt'], json_output=json.dumps(config['json_output']), shared_context=shared, schema_context=_schema_context(schema_path), workflow_context=_workflow_context(domain)))
         plan.setdefault('workflow_mix', [])
         _json(state_dir / 'domain_plans' / f'{domain}.json', plan)
     results = await asyncio.gather(*(generate_domain(domain) for domain in missing), return_exceptions=True)
@@ -247,14 +247,28 @@ def _generate_records(world_parameters, state_dir, schema_path):
     def money(cents):
         return round(cents / 100, 2)
 
-    def recipe(domain, index):
-        recipes = plans[domain].get('workflow_mix') or [{'name': f'{domain}_standard'}]
-        weights = [max(0, float(item.get('weight', 0))) for item in recipes]
+    def workflow(domain, index):
+        workflows = plans[domain].get('workflow_mix') or [{'name': f'{domain}_standard', 'steps': [], 'exception': None}]
+        weights = [max(0, float(item.get('weight', 0))) for item in workflows]
         if not any(weights):
-            selected = recipes[index % len(recipes)]
-        else:
-            selected = rng.choices(recipes, weights=weights, k=1)[0]
-        return selected.get('name', f'{domain}_standard')
+            return workflows[index % len(workflows)]
+        return rng.choices(workflows, weights=weights, k=1)[0]
+
+    def recipe(domain, index):
+        return workflow(domain, index).get('name', f'{domain}_standard')
+
+    def matches(flow, *terms):
+        values = [str(step) for step in flow.get('steps', [])]
+        values.append(str(flow.get('exception') or ''))
+        return any(term in value for value in values for term in terms)
+
+    def workflow_date(flow, index, days_before_end=0):
+        interval = {'daily': 1, 'weekly': 7, 'monthly': 30, 'quarterly': 91, 'annual': 365}.get(flow.get('cadence'))
+        if not interval:
+            return random_date(days_before_end)
+        latest = max(start, end - timedelta(days=days_before_end))
+        span = (latest - start).days + 1
+        return start + timedelta(days=(index * interval) % span)
     start, end = (world_parameters.start_date, world_parameters.end_date)
 
     def random_date(days_before_end=0):
@@ -336,50 +350,54 @@ def _generate_records(world_parameters, state_dir, schema_path):
         tax_bps = int(knowledge['accounting_policies'].get('tax_rate_basis_points', 825))
         inventory = [item for item in registry['offerings'] if item['kind'] != 'subscription'] or registry['offerings']
         for index in range(world_parameters.num_sales_orders):
+            flow = workflow('order_to_cash', index)
+            flow_name = flow.get('name', 'order_to_cash_standard')
             customer = registry['customers'][index % len(registry['customers'])]
             offering = inventory[index % len(inventory)]
-            item, order_date = (item_rows[offering['id']], random_date(40))
+            item, order_date = (item_rows[offering['id']], workflow_date(flow, index, 40))
             subtotal = offering['price_cents'] * rng.randint(1, 5)
             quantity = max(1, round(subtotal / offering['price_cents']))
             tax = round(subtotal * tax_bps / 10000)
             total = subtotal + tax
-            order = add('sales_orders', order_number=f'SO-{index + 1:07d}', customer_id=customer['id'], date=order_date.isoformat(), ship_date=clamp(order_date + timedelta(days=2)).isoformat(), expected_close_date=clamp(order_date + timedelta(days=5)).isoformat(), payment_term_id=1, currency='USD', exchange_rate=1, subsidiary_id=1, department_id=1, class_id=1, location_id=1, billing_address=customer['address'], shipping_address=customer['address'], ship_method='Ground', sales_rep_id=index % len(registry['employees']) + 1, memo=recipe('order_to_cash', index), subtotal=money(subtotal), tax_total=money(tax), total=money(total), amount_fulfilled=money(total), amount_billed=money(total), amount_remaining=0, status='closed', created_by_id=1)
+            order = add('sales_orders', order_number=f'SO-{index + 1:07d}', customer_id=customer['id'], date=order_date.isoformat(), ship_date=clamp(order_date + timedelta(days=2)).isoformat(), expected_close_date=clamp(order_date + timedelta(days=5)).isoformat(), payment_term_id=1, currency='USD', exchange_rate=1, subsidiary_id=1, department_id=1, class_id=1, location_id=1, billing_address=customer['address'], shipping_address=customer['address'], ship_method='Ground', sales_rep_id=index % len(registry['employees']) + 1, memo=flow_name, subtotal=money(subtotal), tax_total=money(tax), total=money(total), amount_fulfilled=money(total), amount_billed=money(total), amount_remaining=0, status='closed', created_by_id=1)
             line = add('sales_order_lines', sales_order_id=order['id'], line_number=1, item_id=item['id'], description=item['name'], quantity=quantity, quantity_fulfilled=quantity, quantity_billed=quantity, rate=money(offering['price_cents']), amount=money(subtotal), tax_code_id=1, tax_rate=tax_bps / 100, gross_amount=money(total), department_id=1, class_id=1, location_id=1, is_closed=1)
-            fulfillment_date = clamp(order_date + timedelta(days=rng.randint(1, 4)))
+            fulfillment_date = clamp(order_date + timedelta(days=rng.randint(8, 20) if matches(flow, 'delay', 'backorder') else rng.randint(1, 4)))
             add('item_fulfillments', fulfillment_number=f'FUL-{index + 1:07d}', sales_order_id=order['id'], date=fulfillment_date.isoformat(), ship_date=fulfillment_date.isoformat(), ship_method='Ground', carrier='UPS', tracking_number=f'1Z{index + 1:016d}', ship_to_address=customer['address'], location_id=1, subsidiary_id=1, status='shipped', created_by_id=1)
             invoice_date = clamp(fulfillment_date + timedelta(days=1))
-            invoice = add('invoices', invoice_number=f"INV-{ids['invoices'] + 1:07d}", customer_id=customer['id'], date=invoice_date.isoformat(), due_date=(invoice_date + timedelta(days=30)).isoformat(), posting_period_id=period_for(invoice_date)['id'], terms='Net 30', currency='USD', exchange_rate=1, subtotal=money(subtotal), tax_total=money(tax), shipping_cost=0, total=money(total), amount_due=money(total), amount_paid=0, memo=recipe('order_to_cash', index), billing_address=customer['address'], shipping_address=customer['address'], sales_rep_id=order['sales_rep_id'], subsidiary_id=1, department_id=1, class_id=1, location_id=1, sales_order_id=order['id'], document_data=json.dumps({'order': order['order_number']}), document_file_name=f"{order['order_number']}.json", document_content_type='application/json', status='open')
+            invoice = add('invoices', invoice_number=f"INV-{ids['invoices'] + 1:07d}", customer_id=customer['id'], date=invoice_date.isoformat(), due_date=(invoice_date + timedelta(days=30)).isoformat(), posting_period_id=period_for(invoice_date)['id'], terms='Net 30', currency='USD', exchange_rate=1, subtotal=money(subtotal), tax_total=money(tax), shipping_cost=0, total=money(total), amount_due=money(total), amount_paid=0, memo=flow_name, billing_address=customer['address'], shipping_address=customer['address'], sales_rep_id=order['sales_rep_id'], subsidiary_id=1, department_id=1, class_id=1, location_id=1, sales_order_id=order['id'], document_data=json.dumps({'order': order['order_number'], 'workflow_steps': flow.get('steps', []), 'workflow_exception': flow.get('exception')}), document_file_name=f"{order['order_number']}.json", document_content_type='application/json', status='open')
             add('invoice_lines', invoice_id=invoice['id'], line_number=1, item_id=item['id'], description=item['name'], quantity=quantity, units=offering['unit'], rate=money(offering['price_cents']), amount=money(subtotal), tax_code_id=1, tax_rate=tax_bps / 100, gross_amount=money(total), department_id=1, class_id=1, location_id=1, sales_order_line_id=line['id'])
             entry = journal(invoice_date, f"Invoice {invoice['invoice_number']}", [(accounts['ar']['id'], total, 0, {'invoice_id': invoice['id'], 'customer_id': customer['id']}), (accounts['revenue']['id'], 0, subtotal, {'invoice_id': invoice['id'], 'customer_id': customer['id']}), (accounts['sales_tax']['id'], 0, tax, {'invoice_id': invoice['id'], 'customer_id': customer['id']})], 'invoice', invoice['id'])
             invoice['journal_entry_id'] = entry['id']
-            paid = total // 2 if rng.random() < world_parameters.exception_rate else total
+            paid = total // 2 if matches(flow, 'partial_payment', 'payment_failure', 'autopay_failure') or rng.random() < world_parameters.exception_rate else total
             receive_payment(invoice, customer['id'], clamp(invoice_date + timedelta(days=rng.randint(3, 20))), paid)
             customer_rows[customer['id']]['balance'] += money(total - paid)
-            events.append({'id': f'sale:{index + 1}', 'type': 'sale', 'date': order_date.isoformat(), 'source_table': 'sales_orders', 'source_id': order['id'], 'amount_cents': total, 'recipe': recipe('order_to_cash', index)})
+            events.append({'id': f'sale:{index + 1}', 'type': 'sale', 'date': order_date.isoformat(), 'source_table': 'sales_orders', 'source_id': order['id'], 'amount_cents': total, 'recipe': flow_name, 'cadence': flow.get('cadence'), 'steps': flow.get('steps', []), 'exception': flow.get('exception')})
     def procure_to_pay():
         nonlocal cash_change
         purchase_count = max(24, world_parameters.num_sales_orders // 4)
         for index in range(purchase_count):
+            flow = workflow('procure_to_pay', index)
+            flow_name = flow.get('name', 'procure_to_pay_standard')
             vendor = registry['vendors'][index % len(registry['vendors'])]
             offering = inventory[index % len(inventory)]
-            item, purchase_date = (item_rows[offering['id']], random_date(35))
+            item, purchase_date = (item_rows[offering['id']], workflow_date(flow, index, 35))
             quantity = rng.randint(2, 20)
             expected = offering['cost_cents'] * quantity
-            variance = round(expected * rng.choice((0.01, 0.02, 0.03))) if rng.random() < world_parameters.exception_rate else 0
+            variance = round(expected * rng.choice((0.01, 0.02, 0.03))) if matches(flow, 'variance', 'mismatch', 'overbill') or rng.random() < world_parameters.exception_rate else 0
             actual = expected + variance
-            order = add('purchase_orders', po_number=f'PO-{index + 1:07d}', vendor_id=vendor['id'], date=purchase_date.isoformat(), expected_date=clamp(purchase_date + timedelta(days=7)).isoformat(), subsidiary_id=1, total=money(expected), memo=recipe('procure_to_pay', index), approval_status='approved', ship_to_location_id=1, ship_to_address='100 Market Street, San Francisco, CA 94105', payment_term_id=1, status='fully_billed')
+            order = add('purchase_orders', po_number=f'PO-{index + 1:07d}', vendor_id=vendor['id'], date=purchase_date.isoformat(), expected_date=clamp(purchase_date + timedelta(days=7)).isoformat(), subsidiary_id=1, total=money(expected), memo=flow_name, approval_status='approved', ship_to_location_id=1, ship_to_address='100 Market Street, San Francisco, CA 94105', payment_term_id=1, status='fully_billed')
             add('purchase_order_lines', purchase_order_id=order['id'], line_number=1, item_id=item['id'], description=item['name'], quantity=quantity, quantity_received=quantity, quantity_billed=quantity, rate=money(offering['cost_cents']), amount=money(expected), department_id=2, class_id=1, location_id=1)
             receipt_date = clamp(purchase_date + timedelta(days=7))
             receipt = add('item_receipts', receipt_number=f'IR-{index + 1:07d}', purchase_order_id=order['id'], vendor_id=vendor['id'], date=receipt_date.isoformat(), location_id=1, subsidiary_id=1, memo=order['po_number'], status='received', created_by_id=1)
             add('item_receipt_lines', item_receipt_id=receipt['id'], line_number=1, item_id=item['id'], description=item['name'], quantity_ordered=quantity, quantity_to_receive=quantity, location='HQ')
             bill_date = clamp(receipt_date + timedelta(days=1))
-            bill = add('bills', bill_number=f'BILL-{index + 1:07d}', vendor_bill_number=f'VB-{index + 1:07d}', vendor_id=vendor['id'], date=bill_date.isoformat(), due_date=(bill_date + timedelta(days=30)).isoformat(), posting_period_id=period_for(bill_date)['id'], terms='Net 30', currency='USD', exchange_rate=1, subtotal=money(actual), tax_total=0, total=money(actual), amount_due=money(actual), amount_paid=0, memo=recipe('procure_to_pay', index), subsidiary_id=1, department_id=2, class_id=1, location_id=1, approval_status='approved', purchase_order_id=order['id'], status='open')
+            bill = add('bills', bill_number=f'BILL-{index + 1:07d}', vendor_bill_number=f'VB-{index + 1:07d}', vendor_id=vendor['id'], date=bill_date.isoformat(), due_date=(bill_date + timedelta(days=30)).isoformat(), posting_period_id=period_for(bill_date)['id'], terms='Net 30', currency='USD', exchange_rate=1, subtotal=money(actual), tax_total=0, total=money(actual), amount_due=money(actual), amount_paid=0, memo=flow_name, subsidiary_id=1, department_id=2, class_id=1, location_id=1, approval_status='approved', purchase_order_id=order['id'], status='open')
             add('bill_lines', bill_id=bill['id'], line_number=1, item_id=item['id'], expense_account_id=accounts['inventory']['id'], description=item['name'], quantity=quantity, units=offering['unit'], rate=money(actual // quantity), amount=money(actual), department_id=2, class_id=1, location_id=1)
             entry = journal(bill_date, f"Bill {bill['bill_number']}", [(accounts['inventory']['id'], actual, 0, {'bill_id': bill['id'], 'vendor_id': vendor['id']}), (accounts['ap']['id'], 0, actual, {'bill_id': bill['id'], 'vendor_id': vendor['id']})], 'bill', bill['id'])
             bill['journal_entry_id'] = entry['id']
             if variance:
                 add('bill_variances', bill_id=bill['id'], purchase_order_id=order['id'], item_receipt_id=receipt['id'], variance_type='price', expected_amount=money(expected), actual_amount=money(actual), variance_amount=money(variance), tolerance_percent=5, within_tolerance=int(variance <= expected * 0.05), reviewed_by_id=1, review_date=bill_date.isoformat(), status='approved')
-            paid = actual // 2 if rng.random() < world_parameters.exception_rate else actual
+            paid = actual // 2 if matches(flow, 'partial_payment', 'payment_hold') or rng.random() < world_parameters.exception_rate else actual
             payment_date = clamp(bill_date + timedelta(days=rng.randint(5, 25)))
             payment = add('bill_payments', payment_number=f'BPAY-{index + 1:07d}', vendor_id=vendor['id'], date=payment_date.isoformat(), payment_method='ACH', reference_number=f'ACH-{index + 1:07d}', amount=money(paid), currency='USD', exchange_rate=1, memo=bill['bill_number'], ap_account_id=accounts['ap']['id'], bank_account_id=bank['id'], subsidiary_id=1, status='paid')
             payment_entry = journal(payment_date, f"Payment {payment['payment_number']}", [(accounts['ap']['id'], paid, 0, {'bill_id': bill['id'], 'bill_payment_id': payment['id']}), (accounts['cash']['id'], 0, paid, {'bill_id': bill['id'], 'bill_payment_id': payment['id']})], 'bill_payment', payment['id'])
@@ -388,16 +406,19 @@ def _generate_records(world_parameters, state_dir, schema_path):
             bill['amount_paid'], bill['amount_due'] = (money(paid), money(actual - paid))
             vendor_rows[vendor['id']]['balance'] += money(actual - paid)
             cash_change -= paid
-            events.append({'id': f'purchase:{index + 1}', 'type': 'purchase', 'date': purchase_date.isoformat(), 'source_table': 'purchase_orders', 'source_id': order['id'], 'amount_cents': actual, 'recipe': recipe('procure_to_pay', index)})
+            events.append({'id': f'purchase:{index + 1}', 'type': 'purchase', 'date': purchase_date.isoformat(), 'source_table': 'purchase_orders', 'source_id': order['id'], 'amount_cents': actual, 'recipe': flow_name, 'cadence': flow.get('cadence'), 'steps': flow.get('steps', []), 'exception': flow.get('exception')})
     def subscriptions_revenue():
         subscription_offerings = [x for x in registry['offerings'] if x['kind'] == 'subscription'] or [registry['offerings'][-1]]
         offering = subscription_offerings[0]
+        subscription_department = next((department for department in registry['departments'] if department['key'] == 'customer_success'), registry['departments'][0])
         plan = add('subscription_plans', plan_id='MAINTENANCE', name='Managed Maintenance Plan', description=offering['name'], billing_mode='advance', subscription_type='usage_and_recurring', default_term=12, auto_renewal=1, proration_type='daily', currency='USD', initial_term=12, renewal_term=12, usage_period='monthly', status='active')
         add('subscription_plan_lines', subscription_plan_id=plan['id'], line_number=1, item_id=item_rows[offering['id']]['id'], subscription_line_type='recurring', quantity=1, include_in_renewal=1, is_required=1, proration_option='prorate')
         rating_runs = {period['id']: add('rating_runs', run_date=period['end_date'], subscription_filter='active', records_processed=world_parameters.num_subscriptions, charges_created=world_parameters.num_subscriptions, total_amount=money(offering['price_cents'] * world_parameters.num_subscriptions), status='completed', created_by_id=1, completed_date=period['end_date']) for period in periods}
         for index in range(world_parameters.num_subscriptions):
+            flow = workflow('subscription_lifecycle', index)
+            flow_name = flow.get('name', 'subscription_lifecycle_standard')
             customer = registry['customers'][index % len(registry['customers'])]
-            subscription_start = clamp(start + timedelta(days=index % min(60, world_parameters.scenario_duration_days)))
+            subscription_start = workflow_date(flow, index)
             active_periods = [period for period in periods if period['end_date'] >= subscription_start.isoformat()]
             mrr, total = (offering['price_cents'], offering['price_cents'] * len(active_periods))
             subscription = add('subscriptions', subscription_number=f'SUB-{index + 1:06d}', customer_id=customer['id'], subscription_plan_id=plan['id'], start_date=subscription_start.isoformat(), end_date=active_periods[-1]['end_date'], term_months=len(active_periods), billing_frequency='monthly', next_billing_date=active_periods[0]['end_date'], auto_renew=1, renewal_term_months=12, mrr=money(mrr), arr=money(mrr * 12), tcv=money(total), currency='USD', subsidiary_id=1, sales_rep_id=index % len(registry['employees']) + 1, status='active')
@@ -408,31 +429,33 @@ def _generate_records(world_parameters, state_dir, schema_path):
             for month_index, period in enumerate(active_periods):
                 bill_date = date.fromisoformat(max(period['start_date'], subscription_start.isoformat()))
                 quantity = rng.randint(80, 400)
-                usage = add('usage_records', subscription_id=subscription['id'], subscription_line_id=subscription_line['id'], usage_date=bill_date.isoformat(), quantity=quantity, unit='service_units', rated_amount=money(mrr), item_id=item_rows[offering['id']]['id'], memo=recipe('subscription_lifecycle', month_index), external_id=f"USAGE-{index + 1:06d}-{period['id']:03d}", status='rated', rating_run_id=rating_runs[period['id']]['id'])
-                invoice = add('invoices', invoice_number=f"INV-{ids['invoices'] + 1:07d}", customer_id=customer['id'], date=bill_date.isoformat(), due_date=(bill_date + timedelta(days=30)).isoformat(), posting_period_id=period['id'], terms='Net 30', currency='USD', exchange_rate=1, subtotal=money(mrr), tax_total=0, shipping_cost=0, total=money(mrr), amount_due=money(mrr), amount_paid=0, memo=subscription['subscription_number'], billing_address=customer['address'], shipping_address=customer['address'], sales_rep_id=subscription['sales_rep_id'], subsidiary_id=1, department_id=4, class_id=2, location_id=1, status='open')
-                add('invoice_lines', invoice_id=invoice['id'], line_number=1, item_id=item_rows[offering['id']]['id'], description=offering['name'], quantity=1, units='month', rate=money(mrr), amount=money(mrr), department_id=4, class_id=2, location_id=1, revenue_recognition_rule_id=2, rev_rec_start_date=period['start_date'], rev_rec_end_date=period['end_date'])
+                usage = add('usage_records', subscription_id=subscription['id'], subscription_line_id=subscription_line['id'], usage_date=bill_date.isoformat(), quantity=quantity, unit='service_units', rated_amount=money(mrr), item_id=item_rows[offering['id']]['id'], memo=flow_name, external_id=f"USAGE-{index + 1:06d}-{period['id']:03d}", status='rated', rating_run_id=rating_runs[period['id']]['id'])
+                invoice = add('invoices', invoice_number=f"INV-{ids['invoices'] + 1:07d}", customer_id=customer['id'], date=bill_date.isoformat(), due_date=(bill_date + timedelta(days=30)).isoformat(), posting_period_id=period['id'], terms='Net 30', currency='USD', exchange_rate=1, subtotal=money(mrr), tax_total=0, shipping_cost=0, total=money(mrr), amount_due=money(mrr), amount_paid=0, memo=subscription['subscription_number'], billing_address=customer['address'], shipping_address=customer['address'], sales_rep_id=subscription['sales_rep_id'], subsidiary_id=1, department_id=subscription_department['id'], class_id=2, location_id=1, status='open')
+                add('invoice_lines', invoice_id=invoice['id'], line_number=1, item_id=item_rows[offering['id']]['id'], description=offering['name'], quantity=1, units='month', rate=money(mrr), amount=money(mrr), department_id=subscription_department['id'], class_id=2, location_id=1, revenue_recognition_rule_id=2, rev_rec_start_date=period['start_date'], rev_rec_end_date=period['end_date'])
                 add('charges', subscription_id=subscription['id'], subscription_line_id=subscription_line['id'], rating_run_id=rating_runs[period['id']]['id'], charge_date=bill_date.isoformat(), charge_type='recurring_and_usage', quantity=quantity, rate=money(mrr / quantity), amount=money(mrr), usage_record_id=usage['id'], invoice_id=invoice['id'], status='invoiced')
                 invoice_entry = journal(bill_date, f"Subscription invoice {invoice['invoice_number']}", [(accounts['ar']['id'], mrr, 0, {'invoice_id': invoice['id'], 'customer_id': customer['id']}), (accounts['deferred_revenue']['id'], 0, mrr, {'invoice_id': invoice['id'], 'customer_id': customer['id']})], 'subscription_invoice', invoice['id'])
                 invoice['journal_entry_id'] = invoice_entry['id']
-                paid = mrr // 2 if rng.random() < world_parameters.exception_rate else mrr
+                paid = mrr // 2 if matches(flow, 'partial_payment', 'payment_failure', 'autopay_failure') or rng.random() < world_parameters.exception_rate else mrr
                 receive_payment(invoice, customer['id'], clamp(bill_date + timedelta(days=10)), paid)
                 customer_rows[customer['id']]['balance'] += money(mrr - paid)
                 recognition_date = date.fromisoformat(period['end_date'])
                 recognition_entry = journal(recognition_date, f"Revenue recognition {subscription['subscription_number']}", [(accounts['deferred_revenue']['id'], mrr, 0, {}), (accounts['subscription_revenue']['id'], 0, mrr, {})], 'revenue_recognition', revenue_plan['id'])
                 add('revenue_plan_lines', plan_id=revenue_plan['id'], period_id=period['id'], recognition_date=recognition_date.isoformat(), amount=money(mrr), percent=round(100 / len(active_periods), 6), journal_entry_id=recognition_entry['id'], posted_date=recognition_date.isoformat(), notes=recipe('revenue_and_journal', month_index), status='posted')
                 add('revenue_recognition_journals', journal_number=f"RRJ-{ids['revenue_recognition_journals'] + 1:07d}", revenue_plan_id=revenue_plan['id'], period_id=period['id'], amount=money(mrr), deferred_revenue_account_id=accounts['deferred_revenue']['id'], recognized_revenue_account_id=accounts['subscription_revenue']['id'], journal_entry_id=recognition_entry['id'], status='posted', posted_date=recognition_date.isoformat())
-                events.append({'id': f"subscription:{index + 1}:{period['id']}", 'type': 'subscription_billing', 'date': bill_date.isoformat(), 'source_table': 'subscriptions', 'source_id': subscription['id'], 'amount_cents': mrr, 'recipe': recipe('subscription_lifecycle', month_index)})
+                events.append({'id': f"subscription:{index + 1}:{period['id']}", 'type': 'subscription_billing', 'date': bill_date.isoformat(), 'source_table': 'subscriptions', 'source_id': subscription['id'], 'amount_cents': mrr, 'recipe': flow_name, 'cadence': flow.get('cadence'), 'steps': flow.get('steps', []), 'exception': flow.get('exception')})
     def expenses_assets():
         nonlocal cash_change
         expense_count = max(24, world_parameters.num_employees)
         for index in range(expense_count):
+            flow = workflow('expenses_and_assets', index)
+            flow_name = flow.get('name', 'expenses_and_assets_standard')
             employee = registry['employees'][index % len(registry['employees'])]
-            expense_date, amount = (random_date(), rng.randint(4000, 60000))
-            report = add('expense_reports', report_number=f'EXP-{index + 1:06d}', employee_id=employee['id'], report_date=expense_date.isoformat(), submit_date=expense_date.isoformat(), total=money(amount), subsidiary_id=1, department_id=employee['department_id'], memo=recipe('expenses_and_assets', index), reimbursement_amount=money(amount), status='paid')
-            add('expense_report_lines', expense_report_id=report['id'], line_number=1, expense_date=expense_date.isoformat(), category=rng.choice(('Travel', 'Meals', 'Software')), amount=money(amount), currency='USD', exchange_rate=1, description=recipe('expenses_and_assets', index), receipt_attached=1, receipt_data=json.dumps({'merchant': 'Business Merchant', 'amount_cents': amount}), receipt_file_name=f'receipt-{index + 1}.json', receipt_content_type='application/json', department_id=employee['department_id'], class_id=3, location_id=1, account_id=accounts['operating_expense']['id'])
+            expense_date, amount = (workflow_date(flow, index), rng.randint(4000, 60000))
+            report = add('expense_reports', report_number=f'EXP-{index + 1:06d}', employee_id=employee['id'], report_date=expense_date.isoformat(), submit_date=expense_date.isoformat(), total=money(amount), subsidiary_id=1, department_id=employee['department_id'], memo=flow_name, reimbursement_amount=money(amount), status='paid')
+            add('expense_report_lines', expense_report_id=report['id'], line_number=1, expense_date=expense_date.isoformat(), category=rng.choice(('Travel', 'Meals', 'Software')), amount=money(amount), currency='USD', exchange_rate=1, description=flow_name, receipt_attached=int(not matches(flow, 'missing_receipt')), receipt_data=json.dumps({'merchant': 'Business Merchant', 'amount_cents': amount}), receipt_file_name=f'receipt-{index + 1}.json', receipt_content_type='application/json', department_id=employee['department_id'], class_id=3, location_id=1, account_id=accounts['operating_expense']['id'])
             journal(expense_date, f"Expense report {report['report_number']}", [(accounts['operating_expense']['id'], amount, 0, {}), (accounts['cash']['id'], 0, amount, {})], 'expense_report', report['id'])
             cash_change -= amount
-            events.append({'id': f'expense:{index + 1}', 'type': 'employee_expense', 'date': expense_date.isoformat(), 'source_table': 'expense_reports', 'source_id': report['id'], 'amount_cents': amount, 'recipe': recipe('expenses_and_assets', index)})
+            events.append({'id': f'expense:{index + 1}', 'type': 'employee_expense', 'date': expense_date.isoformat(), 'source_table': 'expense_reports', 'source_id': report['id'], 'amount_cents': amount, 'recipe': flow_name, 'cadence': flow.get('cadence'), 'steps': flow.get('steps', []), 'exception': flow.get('exception')})
         for index in range(min(12, world_parameters.num_employees)):
             cost = rng.randint(150000, 1500000)
             monthly = (cost - cost // 10) // 36
